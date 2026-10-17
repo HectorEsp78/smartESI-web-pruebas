@@ -1,0 +1,45 @@
+Metadata-Version: 2.4
+Name: smartesi-stats-backend
+Version: 0.1.0
+Summary: Backend for the Smart ESI statistics module (new charts prototype)
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.110.0
+Requires-Dist: uvicorn[standard]>=0.29.0
+Requires-Dist: pydantic>=2.6.0
+Requires-Dist: pydantic-settings>=2.2.1
+Provides-Extra: database
+Requires-Dist: sqlalchemy>=2.0.29; extra == "database"
+Requires-Dist: aiomysql>=0.2.0; extra == "database"
+Requires-Dist: greenlet>=3.0.0; extra == "database"
+Provides-Extra: test
+Requires-Dist: httpx>=0.27.0; extra == "test"
+
+# Backend · Smart ESI Stats
+
+API FastAPI que sirve las estadísticas (consumo energético, consumo por edificio/espacio y cruce
+ocupación–calidad del aire). Con `DATA_SOURCE=mock` (por defecto) no necesita base de datos: genera
+datos sintéticos de forma determinista.
+
+## Arranque
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -e ".[test]"
+cp .env.example .env
+.venv/bin/uvicorn app.main:app --reload --port 8010
+```
+
+- API: http://127.0.0.1:8010
+- Swagger: http://127.0.0.1:8010/docs
+
+## Tests
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+```
+
+## Documentación
+
+Consulta [`../docs/backend.md`](../docs/backend.md) (módulos, endpoints y migración a la base de
+datos real) y [`../docs/arquitectura.md`](../docs/arquitectura.md).
