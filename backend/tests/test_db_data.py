@@ -9,9 +9,12 @@ import unittest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
+from app.core.clock import local_tz
 from app.db.database_data import (
+    SITE_ENERGY_KEY,
     average_series,
     cumulative_to_hourly,
+    load_hourly_energy,
     load_hourly_occupancy,
     net_occupancy,
     parse_counter_value,
@@ -23,7 +26,7 @@ def _hour(day: int, hour: int) -> datetime:
 
 
 class CumulativeToHourlyTest(unittest.TestCase):
-    def test_differences_are_attributed_to_the_previous_hour(self):
+    def test_differences_are_attributed_to_the_current_hour(self):
         rows = [
             (_hour(1, 0), 100.0),
             (_hour(1, 1), 103.0),
@@ -31,8 +34,13 @@ class CumulativeToHourlyTest(unittest.TestCase):
         ]
         hourly = cumulative_to_hourly(rows)
 
-        # Two deltas are produced (the first row is only a baseline).
-        self.assertEqual(len(hourly), 2)
+        # HA stores the sum at the end of the period: the delta between the
+        # 10:00 and 11:00 rows belongs to 11:00 (local 12:00 in winter).
+        first = datetime(2026, 1, 1, 2, 0, tzinfo=local_tz())
+        second = datetime(2026, 1, 1, 3, 0, tzinfo=local_tz())
+        self.assertEqual(set(hourly), {first, second})
+        self.assertAlmostEqual(hourly[first], 3.0, places=3)
+        self.assertAlmostEqual(hourly[second], 2.5, places=3)
         self.assertAlmostEqual(sum(hourly.values()), 5.5, places=3)
 
     def test_meter_reset_does_not_produce_negative_energy(self):
@@ -65,9 +73,39 @@ class CumulativeToHourlyTest(unittest.TestCase):
 
         spread = cumulative_to_hourly(rows, max_delta=50.0, spread=True)
         self.assertAlmostEqual(sum(spread.values()), 60.0, places=3)
+        # The catch-up closes at 06:00 UTC, so it is spread over 01:00-06:00
+        # UTC (02:00-07:00 local), not over the previous six hours.
+        self.assertEqual({key.hour for key in spread}, {2, 3, 4, 5, 6, 7})
 
         dropped = cumulative_to_hourly(rows, max_delta=50.0, spread=False)
         self.assertAlmostEqual(sum(dropped.values()), 0.0, places=3)
+
+
+class EnergyLoaderTest(unittest.IsolatedAsyncioTestCase):
+    async def test_site_meter_is_a_separate_series(self):
+        rows = [
+            ("sensor.cuadro_general", _hour(1, 9), 100.0),
+            ("sensor.cuadro_general", _hour(1, 10), 150.0),
+            ("sensor.edificio_a", _hour(1, 9), 10.0),
+            ("sensor.edificio_a", _hour(1, 10), 12.0),
+        ]
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=local_tz())
+        end = datetime(2026, 1, 1, 12, 0, tzinfo=local_tz())
+
+        with patch(
+            "app.db.database_data.repository.fetch_statistics_sums",
+            new=AsyncMock(return_value=rows),
+        ):
+            data = await load_hourly_energy(
+                None, ["FerminCaballero"], start, end, include_site=True
+            )
+
+        self.assertIn(SITE_ENERGY_KEY, data)
+        self.assertIn("FerminCaballero", data)
+        # 10:00 UTC = 11:00 local in winter; the delta closes at that hour.
+        hour = datetime(2026, 1, 1, 11, 0, tzinfo=local_tz())
+        self.assertAlmostEqual(data[SITE_ENERGY_KEY][hour], 50.0, places=3)
+        self.assertAlmostEqual(data["FerminCaballero"][hour], 2.0, places=3)
 
 
 class CounterValueTest(unittest.TestCase):

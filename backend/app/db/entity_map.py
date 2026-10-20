@@ -5,8 +5,9 @@ it declares which Home Assistant entity/statistic corresponds to each building
 and space, so the queries never guess. Entity ids were confirmed against the
 recorder database (``statistics_meta`` and ``states``).
 
-Mapped today: electricity, gas, outdoor/indoor temperature, humidity, CO2 (only
-the four classrooms that have an air-quality sensor) and the building occupancy
+Mapped today: site-wide electricity (cuadro general), partial electricity
+submeters per building, gas, outdoor/indoor temperature, humidity, CO2 (only the
+four classrooms that have an air-quality sensor) and the building occupancy
 counters. Lighting has no confirmed entity-to-space mapping yet, so it keeps
 using the synthetic model (see ``docs/datos.md``).
 """
@@ -15,11 +16,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Electrical energy meter of each building (kWh, cumulative). In ``statistics``.
+# Main electrical meter for the whole site (kWh, cumulative). In ``statistics``.
+# This is the meter shown by Home Assistant's "cuadro general" energy card.
+SITE_ENERGY_STATISTIC: str = "sensor.cuadro_general"
+
+# Electrical submeters available per building (kWh, cumulative). In
+# ``statistics``. They only cover part of the site load (~3-15 % of the main
+# meter), so they must never be added up as if they were the site total.
 BUILDING_ENERGY_STATISTIC: dict[str, str] = {
     "FerminCaballero": "sensor.edificio_a",
     "ModuloB": "sensor.edificio_b",
 }
+
+# Internal series key for the site-wide meter. It is not a real building id.
+SITE_ENERGY_KEY: str = "__site__"
 
 # Gas meter for the whole site (m3, cumulative, resets daily). In ``statistics``.
 # There is a single gas meter, so per-building gas is not available yet.

@@ -47,7 +47,12 @@ class EnergyByBuildingResponse(BaseModel):
     range: EnergyRange
     metric: EnergyMetric
     unit: str
+    # ``total`` is the site-wide meter (cuadro general). The building submeters
+    # only cover ``submetered_total``; the remainder is ``unmetered_total``.
     total: float
+    submetered_total: float
+    unmetered_total: float
+    coverage: float
     buildings: list[BuildingShare]
     spaces: list[SpaceShare]
 
@@ -123,11 +128,18 @@ class SpaceEfficiency(BaseModel):
 
 
 class EnergyEfficiencyResponse(BaseModel):
-    """Consumo de electricidad normalizado por superficie y por ocupación."""
+    """Consumo de electricidad normalizado por superficie y por ocupación.
+
+    ``total`` is the site-wide meter; the buildings/spaces detail comes from the
+    partial submeters and therefore covers only ``coverage`` of that total.
+    """
 
     range: EnergyRange
     unit: str
     total: float
+    submetered_total: float
+    unmetered_total: float
+    coverage: float
     avg_kwh_per_m2: float
     buildings: list[BuildingEfficiency]
     spaces: list[SpaceEfficiency]

@@ -22,6 +22,8 @@ from app.db.entity_map import (
     BUILDING_ENERGY_STATISTIC,
     BUILDING_OCCUPANCY_COUNTERS,
     OUTDOOR_TEMPERATURE_ENTITY,
+    SITE_ENERGY_KEY,
+    SITE_ENERGY_STATISTIC,
     SITE_GAS_STATISTIC,
     SPACE_CO2_ENTITY,
     SPACE_HUMIDITY_ENTITY,
@@ -116,12 +118,18 @@ def cumulative_to_hourly(
     has not changed, so a *change* from one value to the next may have happened
     several hours later (a meter outage, a recorder restart, a re-import).
 
+    HA stores the cumulative ``sum`` at the **end** of the period identified by
+    ``start``. Therefore the difference between the rows at 10:00 and 11:00 is
+    the consumption of the 11:00-12:00 period and belongs to the 11:00 bucket
+    (the *current* row), not to the previous one. This is the same convention
+    used by the Home Assistant energy dashboard.
+
     - With ``spread=True`` (electricity) the difference is spread evenly over the
       elapsed hours, because it is a real catch-up of consumption.
-    - With ``spread=False`` (gas) the whole difference is kept in one hour and
-      then dropped by the ``max_delta`` guard if it is implausible; the gas meter
-      has long periods with corrupted ``sum``/``state`` jumps that must not be
-      counted at all.
+    - With ``spread=False`` (gas) the whole difference is kept in the current
+      hour and then dropped by the ``max_delta`` guard if it is implausible; the
+      gas meter has long periods with corrupted ``sum``/``state`` jumps that must
+      not be counted at all.
 
     Always: negative differences (a meter reset) produce 0, and a value above
     ``max_delta`` is ignored so a bad row cannot inflate a whole chart.
@@ -147,8 +155,11 @@ def cumulative_to_hourly(
                 hours = int(round(elapsed_hours))
             if max_delta is not None and per_hour > max_delta:
                 per_hour = 0.0
+            # The delta closes the interval at ``start``: attribute it to that
+            # hour (and to the preceding ones when several hours were missing).
+            first_hour = start - timedelta(hours=hours - 1)
             for offset in range(hours):
-                step = last_change_time + timedelta(hours=offset)
+                step = first_hour + timedelta(hours=offset)
                 key = _local_hour_from_epoch(_floor_epoch(step))
                 hourly[key] = hourly.get(key, 0.0) + per_hour
             last_change_time, last_change_sum = start, total
@@ -296,20 +307,32 @@ async def load_hourly_energy(
     building_ids: list[str],
     start_local: datetime,
     end_local: datetime,
+    *,
+    include_site: bool = False,
 ) -> dict[str, dict[datetime, float]]:
-    """Hourly electrical kWh per building, keyed by building id then local hour."""
-    entity_to_building = {
-        BUILDING_ENERGY_STATISTIC[building_id]: building_id
-        for building_id in building_ids
-        if building_id in BUILDING_ENERGY_STATISTIC
-    }
-    if not entity_to_building:
+    """Hourly electrical kWh, keyed by building id (or ``SITE_ENERGY_KEY``).
+
+    ``include_site=True`` adds the whole-site meter used by Home Assistant's
+    "cuadro general" card. The site series is stored under ``SITE_ENERGY_KEY``
+    so it cannot be confused with a building.
+    """
+    entity_to_key: dict[str, str] = {}
+    if include_site:
+        entity_to_key[SITE_ENERGY_STATISTIC] = SITE_ENERGY_KEY
+    entity_to_key.update(
+        {
+            BUILDING_ENERGY_STATISTIC[building_id]: building_id
+            for building_id in building_ids
+            if building_id in BUILDING_ENERGY_STATISTIC
+        }
+    )
+    if not entity_to_key:
         return {}
 
     # One extra hour so the first in-window hour has a preceding sum to subtract.
     rows = await repository.fetch_statistics_sums(
         session,
-        list(entity_to_building.keys()),
+        list(entity_to_key.keys()),
         _to_utc_naive(start_local - timedelta(hours=1)),
         _to_utc_naive(end_local),
     )
@@ -319,7 +342,7 @@ async def load_hourly_energy(
         by_entity.setdefault(statistic_id, []).append((start, total))
 
     return {
-        entity_to_building[statistic_id]: cumulative_to_hourly(
+        entity_to_key[statistic_id]: cumulative_to_hourly(
             series, max_delta=settings.ENERGY_MAX_KWH_PER_HOUR
         )
         for statistic_id, series in by_entity.items()

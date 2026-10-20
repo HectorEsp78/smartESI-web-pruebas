@@ -1,8 +1,17 @@
 import unittest
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
+from app.db.entity_map import SITE_ENERGY_KEY
 from app.main import app
+from app.services.energy_service import (
+    _EnergyProvider,
+    build_buckets,
+    build_by_building,
+    build_consumption,
+    clear_cache,
+)
 
 client = TestClient(app)
 
@@ -48,7 +57,46 @@ class EnergyEndpointsTest(unittest.TestCase):
         body = response.json()
         total_share = sum(building["share"] for building in body["buildings"])
         self.assertAlmostEqual(total_share, 1.0, places=2)
+        self.assertAlmostEqual(body["coverage"], 1.0, places=4)
+        self.assertAlmostEqual(body["unmetered_total"], 0.0, places=2)
         self.assertGreater(len(body["spaces"]), 0)
+
+
+class SiteMeterAggregationTest(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        clear_cache()
+
+    async def asyncTearDown(self):
+        clear_cache()
+
+    async def test_all_buildings_uses_the_site_meter_and_reports_coverage(self):
+        buckets = build_buckets("day")
+        provider = _EnergyProvider(
+            {
+                SITE_ENERGY_KEY: {bucket.start: 100.0 for bucket in buckets},
+                "FerminCaballero": {bucket.start: 10.0 for bucket in buckets},
+                "ModuloB": {bucket.start: 5.0 for bucket in buckets},
+            }
+        )
+
+        with patch(
+            "app.services.energy_service._load_provider",
+            new=AsyncMock(return_value=provider),
+        ):
+            all_buildings = await build_consumption("day", "all", "kwh")
+            fermin = await build_consumption("day", "FerminCaballero", "kwh")
+            by_building = await build_by_building("day", "kwh")
+
+        self.assertAlmostEqual(all_buildings.total, 2400.0, places=2)
+        self.assertAlmostEqual(fermin.total, 240.0, places=2)
+
+        self.assertAlmostEqual(by_building.total, 2400.0, places=2)
+        self.assertAlmostEqual(by_building.submetered_total, 360.0, places=2)
+        self.assertAlmostEqual(by_building.unmetered_total, 2040.0, places=2)
+        self.assertAlmostEqual(by_building.coverage, 0.15, places=4)
+        self.assertAlmostEqual(
+            sum(building.share for building in by_building.buildings), 0.15, places=4
+        )
 
 
 if __name__ == "__main__":

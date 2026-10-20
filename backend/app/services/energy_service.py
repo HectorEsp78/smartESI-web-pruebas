@@ -23,6 +23,7 @@ from app.core.energy_map import (
     SPACES_BY_BUILDING,
     BuildingConfig,
 )
+from app.db.entity_map import SITE_ENERGY_KEY
 from app.schemas.energy import (
     BuildingEfficiency,
     BuildingShare,
@@ -135,11 +136,17 @@ def scope_buildings(building_id: str | None) -> list[BuildingConfig]:
     return [building] if building else []
 
 
+def _is_all_scope(scope: list[BuildingConfig]) -> bool:
+    return {building.id for building in scope} == {building.id for building in BUILDINGS}
+
+
 class _EnergyProvider:
     """Hourly kWh source: the real database series or the synthetic generator.
 
     The synthetic path keeps working exactly as before; the database path just
-    looks the hour up in a preloaded ``{building_id: {local_hour: kwh}}`` dict.
+    looks the hour up in a preloaded ``{key: {local_hour: kwh}}`` dict. The
+    site-wide meter (``SITE_ENERGY_KEY``) is kept separate from the partial
+    building submeters and is only used when the scope is "all buildings".
     """
 
     def __init__(self, database: dict[str, dict[datetime, float]] | None) -> None:
@@ -149,6 +156,19 @@ class _EnergyProvider:
         if self._database is None:
             return mock_data.hour_energy_kwh(building, when)
         return self._database.get(building.id, {}).get(_floor_hour_local(when), 0.0)
+
+    def uses_site_meter(self, scope: list[BuildingConfig]) -> bool:
+        return (
+            self._database is not None
+            and SITE_ENERGY_KEY in self._database
+            and _is_all_scope(scope)
+        )
+
+    def hour_total(self, scope: list[BuildingConfig], when: datetime) -> float:
+        """Consumption of the scope: site meter for all, submeters otherwise."""
+        if self.uses_site_meter(scope):
+            return self._database[SITE_ENERGY_KEY].get(_floor_hour_local(when), 0.0)
+        return sum(self.hour_kwh(building, when) for building in scope)
 
 
 class _OccupancyProvider:
@@ -166,7 +186,11 @@ class _OccupancyProvider:
 
 
 async def _load_provider(
-    scope: list[BuildingConfig], start: datetime, end: datetime
+    scope: list[BuildingConfig],
+    start: datetime,
+    end: datetime,
+    *,
+    include_site: bool = False,
 ) -> _EnergyProvider:
     """Build the provider for a window, reading the real DB when configured."""
     if settings.DATA_SOURCE != "database":
@@ -178,7 +202,11 @@ async def _load_provider(
 
     async with AsyncSessionLocal() as session:
         data = await database_data.load_hourly_energy(
-            session, [building.id for building in scope], start, end
+            session,
+            [building.id for building in scope],
+            start,
+            end,
+            include_site=include_site,
         )
     return _EnergyProvider(data)
 
@@ -219,6 +247,21 @@ def _sum_energy(provider: _EnergyProvider, building: BuildingConfig, start: date
     return total
 
 
+def _sum_scope(
+    provider: _EnergyProvider,
+    scope: list[BuildingConfig],
+    start: datetime,
+    end: datetime,
+) -> float:
+    """Consumption of a scope, using the site meter when the scope is all."""
+    total = 0.0
+    cursor = start
+    while cursor < end:
+        total += provider.hour_total(scope, cursor)
+        cursor += timedelta(hours=1)
+    return total
+
+
 def _convert(kwh: float, metric: EnergyMetric) -> float:
     if metric == "cost":
         return kwh * settings.ENERGY_PRICE_EUR_PER_KWH
@@ -249,14 +292,16 @@ async def build_consumption(
     async def _compute() -> EnergyConsumptionResponse:
         buckets = build_buckets(range_)
         scope = scope_buildings(building_id)
-        provider = await _load_provider(scope, buckets[0].start, buckets[-1].end)
+        provider = await _load_provider(
+            scope,
+            buckets[0].start,
+            buckets[-1].end,
+            include_site=_is_all_scope(scope),
+        )
 
         series: list[EnergyPoint] = []
         for bucket in buckets:
-            kwh = sum(
-                _sum_energy(provider, building, bucket.start, bucket.end)
-                for building in scope
-            )
+            kwh = _sum_scope(provider, scope, bucket.start, bucket.end)
             series.append(
                 EnergyPoint(timestamp=bucket.start, value=round(_convert(kwh, metric), 2))
             )
@@ -287,12 +332,18 @@ async def build_by_building(range_: EnergyRange, metric: EnergyMetric) -> Energy
         buckets = build_buckets(range_)
         start = buckets[0].start
         end = buckets[-1].end
-        provider = await _load_provider(list(BUILDINGS), start, end)
+        scope = list(BUILDINGS)
+        provider = await _load_provider(scope, start, end, include_site=True)
 
         building_kwh = {
             building.id: _sum_energy(provider, building, start, end) for building in BUILDINGS
         }
-        total_kwh = sum(building_kwh.values())
+        submetered_kwh = sum(building_kwh.values())
+        total_kwh = _sum_scope(provider, scope, start, end)
+        if total_kwh <= 0:
+            total_kwh = submetered_kwh
+        unmetered_kwh = max(0.0, total_kwh - submetered_kwh)
+        coverage = submetered_kwh / total_kwh if total_kwh else 0.0
 
         buildings: list[BuildingShare] = []
         spaces: list[SpaceShare] = []
@@ -331,6 +382,9 @@ async def build_by_building(range_: EnergyRange, metric: EnergyMetric) -> Energy
             metric=metric,
             unit=UNIT_BY_METRIC[metric],
             total=round(_convert(total_kwh, metric), 2),
+            submetered_total=round(_convert(submetered_kwh, metric), 2),
+            unmetered_total=round(_convert(unmetered_kwh, metric), 2),
+            coverage=round(coverage, 4),
             buildings=buildings,
             spaces=spaces,
         )
@@ -348,28 +402,55 @@ def _is_active_hour(when: datetime) -> bool:
 def _split_energy(
     provider: _EnergyProvider,
     occupancy_provider: _OccupancyProvider,
-    building: BuildingConfig,
+    scope: list[BuildingConfig],
     start: datetime,
     end: datetime,
 ) -> tuple[float, float, float]:
-    """Return (base_kwh, activity_kwh, lighting_kwh) for a building over a span.
+    """Return (base_kwh, activity_kwh, lighting_kwh) for a scope over a span.
 
     ``base`` is the load outside working hours (nights/weekends) and ``activity``
     the load during working hours. ``lighting`` is the part of the total that the
     model attributes to luminarias (still estimated while there is no real
     lighting submetering).
+
+    When the site meter is available, the total comes from it. The lighting
+    fraction is then a capacity-weighted average of the per-building synthetic
+    fractions, evaluated at the aggregate occupancy ratio.
     """
     base = activity = lighting = 0.0
+    use_site = provider.uses_site_meter(scope)
+    capacity = sum(building.max_capacity for building in scope)
     cursor = start
     while cursor < end:
-        occupancy = occupancy_provider.hour_occupancy(building, cursor)
-        ratio = occupancy / building.max_capacity if building.max_capacity else 0.0
-        total = provider.hour_kwh(building, cursor)
-        lighting += total * mock_data.lighting_fraction(building, cursor, ratio)
-        if _is_active_hour(cursor):
-            activity += total
+        if use_site:
+            occupancy = sum(
+                occupancy_provider.hour_occupancy(building, cursor) for building in scope
+            )
+            ratio = occupancy / capacity if capacity else 0.0
+            total = provider.hour_total(scope, cursor)
+            if capacity:
+                fraction = sum(
+                    building.max_capacity
+                    * mock_data.lighting_fraction(building, cursor, ratio)
+                    for building in scope
+                ) / capacity
+            else:
+                fraction = 0.0
+            lighting += total * fraction
+            if _is_active_hour(cursor):
+                activity += total
+            else:
+                base += total
         else:
-            base += total
+            for building in scope:
+                occupancy = occupancy_provider.hour_occupancy(building, cursor)
+                ratio = occupancy / building.max_capacity if building.max_capacity else 0.0
+                total = provider.hour_kwh(building, cursor)
+                lighting += total * mock_data.lighting_fraction(building, cursor, ratio)
+                if _is_active_hour(cursor):
+                    activity += total
+                else:
+                    base += total
         cursor += timedelta(hours=1)
     return base, activity, lighting
 
@@ -380,21 +461,21 @@ async def build_breakdown(range_: EnergyRange, building_id: str) -> EnergyBreakd
     async def _compute() -> EnergyBreakdownResponse:
         buckets = build_buckets(range_)
         scope = scope_buildings(building_id)
-        provider = await _load_provider(scope, buckets[0].start, buckets[-1].end)
+        provider = await _load_provider(
+            scope,
+            buckets[0].start,
+            buckets[-1].end,
+            include_site=_is_all_scope(scope),
+        )
         occupancy_provider = await load_occupancy_provider(
             scope, buckets[0].start, buckets[-1].end
         )
 
         series: list[EnergyBreakdownPoint] = []
         for bucket in buckets:
-            base = activity = lighting = 0.0
-            for building in scope:
-                base_part, activity_part, lighting_part = _split_energy(
-                    provider, occupancy_provider, building, bucket.start, bucket.end
-                )
-                base += base_part
-                activity += activity_part
-                lighting += lighting_part
+            base, activity, lighting = _split_energy(
+                provider, occupancy_provider, scope, bucket.start, bucket.end
+            )
             total = base + activity
             series.append(
                 EnergyBreakdownPoint(
@@ -449,21 +530,19 @@ async def build_compare(
         scope = scope_buildings(building_id)
         # The provider must cover the previous period too (up to 12 months back).
         provider = await _load_provider(
-            scope, _shift_start(buckets[0].start, range_), buckets[-1].end
+            scope,
+            _shift_start(buckets[0].start, range_),
+            buckets[-1].end,
+            include_site=_is_all_scope(scope),
         )
 
         points: list[EnergyComparePoint] = []
         current_total = previous_total = 0.0
         for bucket in buckets:
-            current = sum(
-                _sum_energy(provider, building, bucket.start, bucket.end) for building in scope
-            )
+            current = _sum_scope(provider, scope, bucket.start, bucket.end)
             previous_start = _shift_start(bucket.start, range_)
             previous_end = previous_start + (bucket.end - bucket.start)
-            previous = sum(
-                _sum_energy(provider, building, previous_start, previous_end)
-                for building in scope
-            )
+            previous = _sum_scope(provider, scope, previous_start, previous_end)
             current_total += current
             previous_total += previous
             points.append(
@@ -513,12 +592,13 @@ async def build_efficiency(range_: EnergyRange) -> EnergyEfficiencyResponse:
         buckets = build_buckets(range_)
         start = buckets[0].start
         end = buckets[-1].end
-        provider = await _load_provider(list(BUILDINGS), start, end)
-        occupancy_provider = await load_occupancy_provider(list(BUILDINGS), start, end)
+        scope = list(BUILDINGS)
+        provider = await _load_provider(scope, start, end, include_site=True)
+        occupancy_provider = await load_occupancy_provider(scope, start, end)
 
         buildings: list[BuildingEfficiency] = []
         spaces: list[SpaceEfficiency] = []
-        total_kwh = 0.0
+        submetered_kwh = 0.0
 
         for building in BUILDINGS:
             building_kwh = _sum_energy(provider, building, start, end)
@@ -526,7 +606,7 @@ async def build_efficiency(range_: EnergyRange) -> EnergyEfficiencyResponse:
                 occupancy_provider, building, start, end
             )
             area = BUILDINGS_AREA_M2[building.id]
-            total_kwh += building_kwh
+            submetered_kwh += building_kwh
 
             buildings.append(
                 BuildingEfficiency(
@@ -566,12 +646,20 @@ async def build_efficiency(range_: EnergyRange) -> EnergyEfficiencyResponse:
                         kwh_per_person_hour=round(space_kwh / space_occupancy_hours, 3)
                         if space_occupancy_hours
                         else 0.0,
-                        share=round(space_kwh / total_kwh, 4) if total_kwh else 0.0,
+                        share=0.0,
                     )
                 )
 
+        total_kwh = _sum_scope(provider, scope, start, end)
+        if total_kwh <= 0:
+            total_kwh = submetered_kwh
+        unmetered_kwh = max(0.0, total_kwh - submetered_kwh)
+        coverage = submetered_kwh / total_kwh if total_kwh else 0.0
+
         for building in buildings:
             building.share = round(building.total / total_kwh, 4) if total_kwh else 0.0
+        for space in spaces:
+            space.share = round(space.total / total_kwh, 4) if total_kwh else 0.0
 
         buildings.sort(key=lambda item: item.kwh_per_m2, reverse=True)
         spaces.sort(key=lambda item: item.kwh_per_m2, reverse=True)
@@ -581,6 +669,9 @@ async def build_efficiency(range_: EnergyRange) -> EnergyEfficiencyResponse:
             range=range_,
             unit=UNIT_BY_METRIC["kwh"],
             total=round(total_kwh, 2),
+            submetered_total=round(submetered_kwh, 2),
+            unmetered_total=round(unmetered_kwh, 2),
+            coverage=round(coverage, 4),
             avg_kwh_per_m2=round(total_kwh / total_area, 2) if total_area else 0.0,
             buildings=buildings,
             spaces=spaces,
