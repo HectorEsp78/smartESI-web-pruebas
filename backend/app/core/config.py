@@ -33,11 +33,25 @@ class Settings(BaseSettings):
     # (kg CO2 per kWh). Gas has its own price and emission factor.
     ENERGY_PRICE_EUR_PER_KWH: float = 0.20
     CO2_KG_PER_KWH: float = 0.15
+    # Plausibility caps for the hourly differences of the cumulative meters.
+    # Recorder imports / meter resets can add a single absurd jump to the `sum`
+    # column; anything above these caps is treated as a bad reading and ignored
+    # (see app/db/database_data.py).
+    ENERGY_MAX_KWH_PER_HOUR: float = 150.0
+    GAS_MAX_M3_PER_HOUR: float = 50.0
     GAS_PRICE_EUR_PER_KWH: float = 0.06
     GAS_CO2_KG_PER_KWH: float = 0.20
+    # The real gas meter reports cubic metres; this factor converts them to kWh
+    # so the API keeps serving kWh (natural gas is ~10.3–11.6 kWh/m3).
+    GAS_KWH_PER_M3: float = 10.35
     # Outdoor temperature below which heating is considered necessary. Used to
     # compute heating degree-days (base 18 °C by default).
     HEATING_BASE_TEMPERATURE_C: float = 18.0
+    # Read the hourly mean of temperature/humidity sensors from HA's
+    # ``statistics`` table (already aggregated) instead of scanning a year of
+    # raw ``states`` rows. Sensors without long-term statistics fall back to
+    # ``states`` automatically, so disabling this only affects performance.
+    USE_STATISTICS_FOR_STATES: bool = True
 
     CORS_ALLOW_ORIGINS: str = "http://localhost:5174,http://127.0.0.1:5174"
     # Small in-memory cache for the (expensive) aggregated series.

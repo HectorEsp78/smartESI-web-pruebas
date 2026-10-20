@@ -8,7 +8,7 @@ router = APIRouter(prefix="/correlation", tags=["correlation"])
 
 
 @router.get("/occupancy-air-quality", response_model=OccupancyAirQualityResponse)
-def get_occupancy_air_quality(
+async def get_occupancy_air_quality(
     range_: CorrelationRange = Query("day", alias="range"),
     building: str = "all",
 ) -> OccupancyAirQualityResponse:
@@ -17,4 +17,4 @@ def get_occupancy_air_quality(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Unknown building '{building}'",
         )
-    return correlation_service.build_occupancy_air_quality(range_, building)
+    return await correlation_service.build_occupancy_air_quality(range_, building)

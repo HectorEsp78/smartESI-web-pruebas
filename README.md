@@ -22,19 +22,26 @@ tocarlo:
   fino, títulos de sección con `border-l-4 border-accent`, etc.).
 - Frontend React + Vite + TypeScript + TanStack Query; backend FastAPI + Pydantic.
 
-> **Datos**: ahora mismo son **sintéticos** (generados por el backend, sin base de datos). El
-> sistema está preparado para conectarse en el futuro a la base de datos real de Home Assistant
-> con un cambio de configuración (`DATA_SOURCE=database`).
+> **Datos**: el backend puede trabajar en dos modos con el mismo contrato de API:
+> `DATA_SOURCE=database` lee la base de datos real del *recorder* de Home Assistant **solo con
+> `SELECT`** (ya implementado para **Electricidad**, **Climatización/gas**, **Ocupación** y
+> **CO₂/aire**: energía, gas, grados-día, temperaturas, humedad, contadores de personas y cuatro
+> sondas de CO₂), y `DATA_SOURCE=mock` (por defecto) genera datos sintéticos para el resto de
+> pestañas y para poder ejecutar sin VPN ni base de datos. La iluminación sigue en mock porque aún
+> no hay un mapeo confirmado de sus controladores.
 
 ## Puesta en marcha rápida
 
-Requiere **Node 18+** y **Python 3.10+**. No requiere VPN ni base de datos.
+Requiere **Node 18+** y **Python 3.10+**. Con el modo por defecto (`mock`) no requiere VPN ni base
+de datos; para leer los datos reales hace falta acceso a la BD del *recorder* (ver
+[`docs/backend.md`](docs/backend.md)).
 
 ```bash
 # 1) Backend  ->  http://127.0.0.1:8010
 cd backend
 python3 -m venv .venv
-.venv/bin/python -m pip install -e ".[test]"
+.venv/bin/python -m pip install -e ".[test]"   # añade ".[database]" para leer la BD real
+cp .env.example .env                            # opcional: los valores por defecto ya funcionan
 .venv/bin/uvicorn app.main:app --reload --port 8010
 
 # 2) Frontend ->  http://localhost:5174
@@ -57,15 +64,27 @@ Detalle completo en [`docs/puesta-en-marcha.md`](docs/puesta-en-marcha.md).
 Se usan puertos distintos a los del proyecto original (8000 / 5173) para poder ejecutar ambos a la
 vez sin conflictos.
 
+## Despliegue
+
+[`deploy/`](deploy/README.md) incluye un `docker-compose.yml` con el backend y un nginx que sirve el
+frontend y hace de *reverse proxy* de `/api`:
+
+```bash
+cd deploy
+cp .env.example .env     # ajusta DB_* (o DATA_SOURCE=mock) y CORS
+docker compose up -d --build
+# http://localhost:8080
+```
+
 ## Estructura
 
 ```text
 smartesi-stats/
-├── backend/          API FastAPI (datos sintéticos; preparada para la BD real)
+├── backend/          API FastAPI (modo mock o BD real de Home Assistant)
 │   └── app/
 │       ├── api/          Routers: energy, lighting, climate, decisions, correlation, meta
 │       ├── core/         Config, reloj, caché y catálogo buildings/spaces
-│       ├── db/           Sesión SQLAlchemy (solo si DATA_SOURCE=database)
+│       ├── db/           Modelos HA, repositorio de consultas y sesión (DATA_SOURCE=database)
 │       ├── schemas/      Modelos Pydantic (contrato de la API)
 │       └── services/     Generador de datos + servicios de agregación y decisiones
 ├── frontend/         SPA React + Vite
@@ -78,7 +97,7 @@ smartesi-stats/
 │       ├── lib/          Formateo, colores de gráficas, pestañas
 │       └── types/        DTOs de la API
 ├── docs/             Documentación
-└── deploy/           (pendiente) despliegue del prototipo
+└── deploy/           Docker Compose + nginx para publicar el prototipo
 ```
 
 ## Documentación

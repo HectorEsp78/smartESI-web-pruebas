@@ -30,13 +30,13 @@ def _priority(savings_eur_year: float) -> str:
     return "baja"
 
 
-def build_opportunities(range_: DecisionRange, building_id: str) -> DecisionsResponse:
+async def build_opportunities(range_: DecisionRange, building_id: str) -> DecisionsResponse:
     days = DAYS_BY_RANGE[range_]
     annualization = 365.0 / days
     items: list[Opportunity] = []
 
     # 1. Luces encendidas sin ocupación --------------------------------------
-    waste = lighting_service.build_waste(range_, building_id)
+    waste = await lighting_service.build_waste(range_, building_id)
     if waste.annualized_cost_eur > 0:
         items.append(
             Opportunity(
@@ -60,7 +60,7 @@ def build_opportunities(range_: DecisionRange, building_id: str) -> DecisionsRes
         )
 
     # 2. Calefacción de aulas vacías -----------------------------------------
-    empty = climate_service.build_empty_spaces(range_, building_id)
+    empty = await climate_service.build_empty_spaces(range_, building_id)
     if empty.total_annualized_cost_eur > 0:
         items.append(
             Opportunity(
@@ -85,7 +85,7 @@ def build_opportunities(range_: DecisionRange, building_id: str) -> DecisionsRes
         )
 
     # 3. Carga base fuera de horario -----------------------------------------
-    breakdown = energy_service.build_breakdown(range_, building_id)
+    breakdown = await energy_service.build_breakdown(range_, building_id)
     if breakdown.base_total > 0:
         base_savings = breakdown.base_total * _BASE_LOAD_SAVING_FACTOR
         eur = base_savings * annualization * settings.ENERGY_PRICE_EUR_PER_KWH
@@ -111,7 +111,7 @@ def build_opportunities(range_: DecisionRange, building_id: str) -> DecisionsRes
         )
 
     # 4. Espacios con consumo por m² por encima de la media -------------------
-    efficiency = energy_service.build_efficiency(range_)
+    efficiency = await energy_service.build_efficiency(range_)
     worst = next(
         (
             space
@@ -146,7 +146,7 @@ def build_opportunities(range_: DecisionRange, building_id: str) -> DecisionsRes
             )
 
     # 5. Tendencia interanual de la electricidad ------------------------------
-    compare = energy_service.build_compare("year", building_id, "kwh")
+    compare = await energy_service.build_compare("year", building_id, "kwh")
     if compare.previous_total > 0 and compare.delta_pct > 0:
         increase_kwh = compare.current_total - compare.previous_total
         eur = increase_kwh * settings.ENERGY_PRICE_EUR_PER_KWH

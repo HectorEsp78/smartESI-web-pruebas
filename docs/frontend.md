@@ -58,9 +58,13 @@ pages/Stats  →  components/stats/*  →  hooks/use*  →  api/*  →  fetch /a
   gestiona sus propios controles **de edificio y métrica** con los hooks; el **periodo** lo toma del
   contexto global.
 - **`pages/Stats.tsx`**: envuelve todo en `RangeProvider`, pinta el `Header` y el **contenido de la
-  pestaña activa**. Las pestañas se definen en `lib/sections.ts`.
+  pestaña activa**. Las pestañas se definen en `lib/sections.ts`. La pestaña y el periodo activos se
+  reflejan en la URL (`?tab=electricidad&range=month`) con `lib/urlState.ts`, así que una vista se
+  puede compartir o recargar sin perder el estado.
 - **`components/Header.tsx`**: logos y banner, la navegación por pestañas y el **selector de periodo
-  global**.
+  global** (sincronizado con la URL).
+- **`lib/csv.ts`** + `components/ui/ExportCsvButton.tsx`: exportación a CSV (separador `;` y BOM
+  UTF-8 para Excel) de las tablas de Decisiones, eficiencia y luminarias por espacio.
 
 En [`componentes.md`](componentes.md) hay el catálogo detallado de cada pieza de la web.
 

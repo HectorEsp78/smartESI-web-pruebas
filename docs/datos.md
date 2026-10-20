@@ -4,9 +4,11 @@ Este documento explica **de dónde salen los datos** que pinta el panel, **cómo
 mientras no hay base de datos y **qué habría que cambiar** para usar la instalación real.
 
 - Con `DATA_SOURCE=mock` (por defecto) el backend **inventa** los datos de forma determinista.
-- Con `DATA_SOURCE=database` (futuro) leerá de la base de datos del *recorder* de Home Assistant.
+- Con `DATA_SOURCE=database` lee de la base de datos del *recorder* de Home Assistant **solo con
+  `SELECT`**. Ya está implementado para **Electricidad**, **Climatización/gas**, **Ocupación** y
+  **CO₂/aire**; la iluminación (y el reparto de ocupación por aula) sigue en sintético.
 - El **contrato de la API no cambia** entre ambos modos: los *schemas* Pydantic y el frontend son
-  los mismos. Solo cambia la implementación de la capa `services/`.
+  los mismos. Solo cambia la capa de datos que usa cada servicio.
 
 ---
 
@@ -119,30 +121,70 @@ Conversión de métricas (electricidad): `cost = kWh · ENERGY_PRICE_EUR_PER_KWH
 (`GAS_PRICE_EUR_PER_KWH`, `GAS_CO2_KG_PER_KWH`).
 
 Cada agregación pesada se calcula **una vez por (rango, edificio)** y se cachea con TTL
-(`STATS_CACHE_TTL_SECONDS`, 30 s). Ver [`docs/arquitectura.md`](arquitectura.md).
+(`STATS_CACHE_TTL_SECONDS`, 30 s; el clima usa como mínimo 300 s porque un `year` real es costoso).
+Ver [`docs/arquitectura.md`](arquitectura.md).
 
 El detalle de qué estadístico sale de qué fuente está en
 [`docs/estadisticos.md`](estadisticos.md).
 
 ---
 
-## 4. Mapa de migración a datos reales
+## 4. Datos reales y mapa de migración
 
-Cuando se habilite `DATA_SOURCE=database`, hay que sustituir las funciones de `mock_data` por
-consultas a las tablas de Home Assistant (`states`, `statistics`). El patrón es **declarar
-explícitamente qué entidad corresponde a qué espacio**, igual que hoy hace `energy_map.py`.
+Con `DATA_SOURCE=database` el backend lee la BD del *recorder* de Home Assistant **solo con `SELECT`**
+(ver [`docs/backend.md`](backend.md) para el detalle de conexión y consultas). La correspondencia
+entidad → edificio/espacio se declara **explícitamente** en
+[`backend/app/db/entity_map.py`](../backend/app/db/entity_map.py), igual que hoy hace `energy_map.py`.
 
-| Estadístico sintético | Origen real previsto |
-| --------------------- | -------------------- |
-| Electricidad por edificio | Sensor de potencia/energía del cuadro del edificio (`statistics`). |
-| Ocupación | Sensor de aforo / contador de personas. |
-| CO₂, temperatura, humedad | Sensores ambientales por aula. |
-| Luminarias | Submedida de alumbrado o estimación por horario y potencia instalada. |
-| Electroválvulas | Entidad *switch* de la válvula de calefacción. |
-| Gas | Contador de gas de la caldera. |
-| Temperatura exterior y luz natural | Meteorología / integración solar. |
+### 4.1 Estado por estadístico
 
-Pasos completos en [`docs/backend.md`](backend.md) (sección *Migrar a la base de datos real*).
+| Estadístico | Origen real | Estado |
+| ----------- | ----------- | ------ |
+| Electricidad por edificio | `statistics.sum` de `sensor.edificio_a` / `sensor.edificio_b` (kWh). | ✅ Real |
+| Gas del sitio | `statistics.sum` de `sensor.daily_gas` (m³ → kWh con `GAS_KWH_PER_M3`). Solo `building=all`. | ✅ Real |
+| Grados-día | `statistics.mean`/`states` de `sensor.temperatura_meteo` + `HEATING_BASE_TEMPERATURE_C`. | ✅ Real |
+| Temperatura interior por espacio | `statistics.mean`/`states` de `sensor.sensor_temperatura_aXX` y `sensor.temperatura_shellyN`. | ✅ Real |
+| Humedad interior por espacio | `statistics.mean`/`states` de `sensor.sensor_humedad_aXX` y `sensor.humedad_shellyN`. | ✅ Real |
+| Ocupación por edificio | Contadores de entrada/salida: estado de `sensor.entrada_fermin_caballero`/`sensor.salida_fermin_caballero`; atributos `LTR_SUM`/`RTL_SUM` de `sensor.contador_personas`. | ✅ Real |
+| Reparto de ocupación por aula | Los contadores son por edificio; el reparto relativo entre aulas es sintético. | ⛔ Mock |
+| Electroválvulas | No existe entidad de válvula en la BD. | ⛔ Mock |
+| Iluminación | `light.controller1..7` y `sensor.sensor_luz_aXX` existen, pero falta confirmar el mapeo a espacios y la potencia por circuito. | ⛔ Mock |
+| CO₂ / aire | `air_quality.co2_3`, `co2_1`, `co2_2` y `co2_4` (A11, A12, A21, A22). El resto de espacios, mock. | ✅ Real (4 aulas) |
+| Eficiencia (kWh/persona·hora) | Energía real + ocupación real; el reparto por aula es por superficie. | ✅ Real (aprox.) |
 
-> Mientras no exista el mapeo real, cualquier estadístico nuevo se añade primero al generador
-> sintético; el resto de la API (schemas, routers, frontend) no se toca.
+> El **gas** se sirve solo para el conjunto del centro porque en la instalación hay **un único
+> contador**. Al pedir un edificio concreto, el gas es `0` (la temperatura y los grados-día sí son
+> reales). La **ocupación** ya es real a nivel de edificio, pero las **válvulas** siguen siendo
+> sintéticas: el gas estimado en aulas vacías (`/climate/empty-spaces`) reparte el gas real según
+> ese modelo, así que es una **estimación**.
+>
+> El **CO₂** solo es real en las cuatro aulas instrumentadas; en el resto de espacios y en Módulo B
+> la gráfica de ocupación–aire usa el modelo sintético para esas series. Los contadores de personas
+> pueden descuadrarse si se reinician o pierden lecturas; se acotan al aforo del edificio.
+
+### 4.2 Cómo se convierte la BD en series horarias
+
+En [`backend/app/db/database_data.py`](../backend/app/db/database_data.py):
+
+- **Contadores (`statistics.sum`)**: la energía de una hora es la diferencia entre dos lecturas
+  acumuladas consecutivas.
+  - Los volcados de HA tras un corte (varios días planos y luego un salto) se **reparten** entre las
+    horas del hueco: son consumo real.
+  - Los valores negativos (reinicio del contador) y los que superan el tope
+    (`ENERGY_MAX_KWH_PER_HOUR`, `GAS_MAX_M3_PER_HOUR`) se **descartan**.
+  - El `sum` del gas tiene periodos con saltos corruptos: al ser irreales, se descartan en bloque.
+- **Estados (`states`)**: media de las lecturas numéricas por hora. Como HA solo escribe al cambiar el
+  valor, se rellena hacia delante con el último valor conocido (*fill-forward*), sembrado con el
+  último estado anterior a la ventana.
+- Los *timestamps* de HA son UTC sin zona; la conversión a hora local (Europe/Madrid) se hace en
+  Python, con `SET time_zone='+00:00'` en la sesión.
+
+### 4.3 Pendiente
+
+- Mapear iluminación (`light.controller1..7`, `sensor.sensor_luz_aXX`) a edificios/espacios y
+  obtener una medida de potencia o consumo por circuito; hasta entonces la pestaña sigue en mock.
+- Reparto real de la ocupación por aula (los contadores actuales son por edificio).
+- Electroválvulas: no existen como entidad; si se añaden, sustituir el modelo de válvulas.
+- Ampliar el CO₂ a más espacios (hoy solo A11/A12/A21/A22).
+- Optimizar `statistics.mean` para más sensores: ya se usa cuando existe, y queda el *fallback* a
+  `states` para los que no tienen estadísticas de largo plazo.

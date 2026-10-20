@@ -4,7 +4,9 @@
 
 - **Python 3.10+** (probado con 3.14).
 - **Node.js 18+** y npm (probado con Node 22).
-- No se necesita VPN ni base de datos: el backend genera datos sintéticos.
+- No se necesita VPN ni base de datos con el modo por defecto (`DATA_SOURCE=mock`): el backend genera
+  datos sintéticos. Para leer la base de datos real del *recorder* de Home Assistant hace falta
+  acceso a esa BD (ver más abajo).
 
 ## 1. Backend (FastAPI)
 
@@ -12,7 +14,7 @@
 cd backend
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -e ".[test]"
+.venv/bin/python -m pip install -e ".[test]"   # añade ".[database]" para leer la BD real
 cp .env.example .env          # opcional: los valores por defecto ya funcionan
 .venv/bin/uvicorn app.main:app --reload --port 8010
 ```
@@ -25,8 +27,37 @@ Para ejecutar los tests:
 
 ```bash
 cd backend
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -t . -v
 ```
+
+> El `-t .` hace que `tests/` se trate como paquete y `tests/__init__.py` fuerce `DATA_SOURCE=mock`,
+> de modo que los tests nunca tocan la base de datos real aunque tu `.env` apunte a ella.
+
+### Conectar con la base de datos real
+
+Con `DATA_SOURCE=database` el backend lee la BD del *recorder* de Home Assistant **solo con
+`SELECT`** (no escribe nunca). Necesitas:
+
+1. Instalar el extra de base de datos:
+   ```bash
+   cd backend
+   .venv/bin/python -m pip install -e ".[database]"
+   ```
+2. Rellenar en `backend/.env`:
+   ```dotenv
+   DATA_SOURCE=database
+   DB_HOST=172.20.48.17
+   DB_PORT=3306
+   DB_NAME=smartesi
+   DB_USER=admin_db
+   DB_PASSWORD=...
+   DB_SSL=true
+   DB_SSL_CA=            # vacío = TLS cifrado sin verificar el certificado
+   ```
+3. Arrancar el backend como siempre. `GET /health/live` responde `"data_source":"database"`.
+
+Detalle de qué datos son reales y cuáles siguen siendo sintéticos en
+[`docs/backend.md`](backend.md) y [`docs/datos.md`](datos.md).
 
 ## 2. Frontend (React + Vite)
 
@@ -61,6 +92,20 @@ npm run preview        # sirve el build
 Si cambias el puerto del backend, actualiza el `proxy` en
 [`frontend/vite.config.ts`](../frontend/vite.config.ts) (y el `CORS_ALLOW_ORIGINS` del backend si
 cambias el del frontend).
+
+## Despliegue con Docker
+
+Para publicar el prototipo (sin Node ni Python en el host):
+
+```bash
+cd deploy
+cp .env.example .env     # ajusta DB_* o pon DATA_SOURCE=mock
+docker compose up -d --build
+# http://localhost:8080
+```
+
+nginx sirve el build del frontend y redirige `/api` al backend, así que no hay que configurar CORS
+ni `VITE_API_BASE_URL`. Detalle en [`deploy/README.md`](../deploy/README.md).
 
 ## Orden de arranque
 

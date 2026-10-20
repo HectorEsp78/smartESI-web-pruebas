@@ -26,44 +26,44 @@ def _validate_building(building_id: str) -> None:
 
 
 @router.get("/consumption", response_model=EnergyConsumptionResponse)
-def get_consumption(
+async def get_consumption(
     range_: EnergyRange = Query("day", alias="range"),
     building: str = "all",
     metric: EnergyMetric = "kwh",
 ) -> EnergyConsumptionResponse:
     _validate_building(building)
-    return energy_service.build_consumption(range_, building, metric)
+    return await energy_service.build_consumption(range_, building, metric)
 
 
 @router.get("/by-building", response_model=EnergyByBuildingResponse)
-def get_by_building(
+async def get_by_building(
     range_: EnergyRange = Query("day", alias="range"),
     metric: EnergyMetric = "kwh",
 ) -> EnergyByBuildingResponse:
-    return energy_service.build_by_building(range_, metric)
+    return await energy_service.build_by_building(range_, metric)
 
 
 @router.get("/breakdown", response_model=EnergyBreakdownResponse)
-def get_breakdown(
+async def get_breakdown(
     range_: EnergyRange = Query("day", alias="range"),
     building: str = "all",
 ) -> EnergyBreakdownResponse:
     _validate_building(building)
-    return energy_service.build_breakdown(range_, building)
+    return await energy_service.build_breakdown(range_, building)
 
 
 @router.get("/compare", response_model=EnergyCompareResponse)
-def get_compare(
+async def get_compare(
     range_: EnergyRange = Query("day", alias="range"),
     building: str = "all",
     metric: EnergyMetric = "kwh",
 ) -> EnergyCompareResponse:
     _validate_building(building)
-    return energy_service.build_compare(range_, building, metric)
+    return await energy_service.build_compare(range_, building, metric)
 
 
 @router.get("/efficiency", response_model=EnergyEfficiencyResponse)
-def get_efficiency(
+async def get_efficiency(
     range_: EnergyRange = Query("day", alias="range"),
 ) -> EnergyEfficiencyResponse:
-    return energy_service.build_efficiency(range_)
+    return await energy_service.build_efficiency(range_)

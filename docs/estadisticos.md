@@ -8,6 +8,14 @@ variables para tomar decisiones** sobre el gasto eléctrico y de gas.
 - Cómo se pintan estos estadísticos en la web está en [`componentes.md`](componentes.md) y
   [`graficas.md`](graficas.md).
 
+> **Origen (modo `DATA_SOURCE=database`)**: la energía horaria por edificio, el gas del centro, los
+> grados-día, las temperaturas (exterior e interior por aula), la humedad, la ocupación por edificio
+> (contadores de entrada/salida) y el CO₂ de A11/A12/A21/A22 son **reales** (BD de Home Assistant,
+> solo `SELECT`). Las **electroválvulas**, el reparto de ocupación por aula y la iluminación siguen
+> siendo sintéticos, así que los estadísticos que dependen de ellos (estado de válvulas, gas en
+> aulas vacías y luz sin ocupación) son estimaciones. Detalle y estado por estadístico en
+> [`datos.md`](datos.md#41-estado-por-estadístico).
+
 ---
 
 ## 1. Estadística descriptiva base

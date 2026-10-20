@@ -24,27 +24,27 @@ def _validate_building(building_id: str) -> None:
 
 
 @router.get("/consumption", response_model=LightingConsumptionResponse)
-def get_consumption(
+async def get_consumption(
     range_: LightingRange = Query("day", alias="range"),
     building: str = ALL_BUILDINGS,
 ) -> LightingConsumptionResponse:
     _validate_building(building)
-    return lighting_service.build_consumption(range_, building)
+    return await lighting_service.build_consumption(range_, building)
 
 
 @router.get("/by-space", response_model=LightingBySpaceResponse)
-def get_by_space(
+async def get_by_space(
     range_: LightingRange = Query("day", alias="range"),
     building: str = ALL_BUILDINGS,
 ) -> LightingBySpaceResponse:
     _validate_building(building)
-    return lighting_service.build_by_space(range_, building)
+    return await lighting_service.build_by_space(range_, building)
 
 
 @router.get("/waste", response_model=LightingWasteResponse)
-def get_waste(
+async def get_waste(
     range_: LightingRange = Query("day", alias="range"),
     building: str = ALL_BUILDINGS,
 ) -> LightingWasteResponse:
     _validate_building(building)
-    return lighting_service.build_waste(range_, building)
+    return await lighting_service.build_waste(range_, building)

@@ -9,7 +9,7 @@ router = APIRouter(prefix="/decisions", tags=["decisions"])
 
 
 @router.get("/opportunities", response_model=DecisionsResponse)
-def get_opportunities(
+async def get_opportunities(
     range_: DecisionRange = Query("month", alias="range"),
     building: str = ALL_BUILDINGS,
 ) -> DecisionsResponse:
@@ -18,4 +18,4 @@ def get_opportunities(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Unknown building '{building}'",
         )
-    return decisions_service.build_opportunities(range_, building)
+    return await decisions_service.build_opportunities(range_, building)

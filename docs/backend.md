@@ -1,7 +1,9 @@
 # Backend (FastAPI + Pydantic)
 
 Código en [`backend/app/`](../backend/app). Es una API de solo lectura que sirve estadísticas
-agregadas. Con `DATA_SOURCE=mock` no necesita base de datos.
+agregadas. Con `DATA_SOURCE=mock` (por defecto) no necesita base de datos; con
+`DATA_SOURCE=database` lee la base de datos real del *recorder* de Home Assistant **solo con
+`SELECT`**.
 
 ## Stack
 
@@ -18,27 +20,38 @@ agregadas. Con `DATA_SOURCE=mock` no necesita base de datos.
 ```text
 api/ (routers)  →  services/ (lógica + agregación)  →  core/ (config, energy_map, clock, cache)
                                     ↘  schemas/ (respuestas Pydantic)
+                                    ↘  db/ (solo DATA_SOURCE=database: modelos HA + repositorio)
 ```
 
 - **`api/`**: un router por dominio (`energy.py`, `lighting.py`, `climate.py`, `decisions.py`,
   `correlation.py`, `meta.py`). Valida el edificio y delega en el servicio; no contiene lógica de
-  negocio. Todos se registran bajo `/api/v1` en `main.py`.
+  negocio. Todos se registran bajo `/api/v1` en `main.py`. Son `async` para poder esperar a la BD.
 - **`services/`**:
   - `mock_data.py` genera los valores base por hora (energía, ocupación, CO₂, temperatura, humedad,
     meteorología, luz natural, luminarias, válvulas y gas) de forma determinista.
   - `stats.py` aporta la estadística descriptiva (media, mediana, desviación, percentiles,
     correlación y regresión) que comparten los demás servicios.
   - `energy_service.py` agrega consumo, por edificio, desglose (carga base/actividad/luz), comparativa
-    con el periodo anterior y eficiencia (kWh/m² y kWh/persona·hora).
+    con el periodo anterior y eficiencia (kWh/m² y kWh/persona·hora). En modo BD, la energía horaria
+    y la ocupación de cada edificio salen del repositorio; el reparto por espacio sigue en mock.
   - `lighting_service.py` separa luminarias del resto, reparte por espacio y calcula el despilfarro
-    (luz sin ocupación) con su €/año.
+    (luz sin ocupación) con su €/año. La energía sigue siendo sintética, pero la ocupación es real
+    en modo BD.
   - `climate_service.py` calcula gas y grados-día, el estado de las electroválvulas frente a la
-    temperatura de cada aula, y el gas gastado en espacios vacíos.
+    temperatura de cada aula, y el gas gastado en espacios vacíos. En modo BD, el gas, las
+    temperaturas y la ocupación del edificio son reales; las válvulas y el reparto por aula siguen
+    en mock.
   - `decisions_service.py` traduce los cruces anteriores a un **ranking de oportunidades** con €/año.
-  - `correlation_service.py` cruza ocupación y CO₂.
+  - `correlation_service.py` cruza ocupación (real por edificio) y CO₂ (real en A11/A12/A21/A22).
   - Todos los servicios exponen `clear_cache()`.
 - **`core/`**: `config.py` (ajustes), `energy_map.py` (catálogo de edificios y espacios),
   `clock.py` (UTC local) y `cache.py` (caché TTL).
+- **`db/`** (solo se importa con `DATA_SOURCE=database`):
+  - `session.py`: engine async (`mysql+aiomysql`) con TLS y `SET time_zone='+00:00'`.
+  - `models/ha.py`: mapeo SQLAlchemy de `states`, `statistics` y `statistics_meta`.
+  - `entity_map.py`: qué entidad de Home Assistant corresponde a cada edificio/espacio.
+  - `repository.py`: las consultas `SELECT` (agregación horaria en SQL).
+  - `database_data.py`: convierte las filas en series horarias en hora local (deltas, *fill-forward*).
 - **`schemas/`**: modelos Pydantic que definen exactamente lo que ve el frontend.
 
 ## Configuración (`backend/.env`)
@@ -50,13 +63,17 @@ Copia `.env.example` a `.env`. Variables principales:
 | `DATA_SOURCE` | `mock` | `mock` (sintético) o `database` (BD real). |
 | `ENERGY_PRICE_EUR_PER_KWH` | `0.20` | Precio de la electricidad para la métrica de coste (€). |
 | `CO2_KG_PER_KWH` | `0.15` | Factor de emisiones de la electricidad (kg CO₂/kWh). |
+| `ENERGY_MAX_KWH_PER_HOUR` | `150.0` | Tope de plausibilidad del consumo eléctrico horario (saltos mayores se ignoran). |
 | `GAS_PRICE_EUR_PER_KWH` | `0.06` | Precio del gas (€/kWh). |
 | `GAS_CO2_KG_PER_KWH` | `0.20` | Factor de emisiones del gas (kg CO₂/kWh). |
+| `GAS_KWH_PER_M3` | `10.35` | Conversión m³ → kWh del contador real de gas. |
+| `GAS_MAX_M3_PER_HOUR` | `50.0` | Tope de plausibilidad del gas horario (saltos mayores se ignoran). |
 | `HEATING_BASE_TEMPERATURE_C` | `18.0` | Base para los grados-día de calefacción (°C). |
-| `STATS_CACHE_TTL_SECONDS` | `30` | TTL de la caché de agregaciones. |
+| `USE_STATISTICS_FOR_STATES` | `true` | Lee temperaturas/humedad de `statistics` (media horaria) en vez de recorrer `states`; si un sensor no tiene estadísticas, cae a `states`. |
+| `STATS_CACHE_TTL_SECONDS` | `30` | TTL de la caché de agregaciones (clima usa como mínimo 300 s). |
 | `TIMEZONE` | `Europe/Madrid` | Zona para el cálculo de horas/días/meses. |
 | `CORS_ALLOW_ORIGINS` | `http://localhost:5174,...` | Orígenes permitidos. |
-| `DB_*` | — | Conexión a MariaDB (solo `DATA_SOURCE=database`). |
+| `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, `DB_SSL`, `DB_SSL_CA` | — | Conexión a MariaDB (solo `DATA_SOURCE=database`). Con `DB_SSL=true` y `DB_SSL_CA` vacío se cifra sin verificar el certificado. |
 
 ## Añadir un edificio o un espacio
 
@@ -82,34 +99,73 @@ nombres resulten familiares; las cifras de consumo y de clima, en cambio, son si
 3. Expón el endpoint en el router y regístralo (ya lo está si reutilizas el router existente).
 4. Añade un test que compruebe las invariantes (cuántos puntos, coherencia de totales, 404…).
 
-## Migrar a la base de datos real
+## Base de datos real (estado de la migración)
 
-El diseño ya contempla el cambio. Detalle en [`datos.md`](datos.md); resumen:
+El modo `DATA_SOURCE=database` está implementado para **Electricidad**, **Climatización/gas**,
+**Ocupación** y **CO₂/aire**. Todo es **solo lectura** (`SELECT`): el backend nunca escribe en las
+tablas de Home Assistant. La iluminación sigue en mock porque no hay un mapeo confirmado
+controlador → edificio/espacio (ver más abajo).
 
-1. Instala el extra de base de datos:
-   ```bash
-   cd backend
-   .venv/bin/python -m pip install -e ".[database]"
-   ```
-2. En `.env`, pon `DATA_SOURCE=database` y rellena `DB_*` (host, usuario, contraseña, TLS). Necesitas
-   acceso a la red/VPN de la UCLM.
-3. Sustituye las llamadas a `mock_data` en los servicios (`energy_service`, `lighting_service`,
-   `climate_service`, `correlation_service`) por consultas a las tablas de Home Assistant (`states`,
-   `statistics`). La sesión async ya está lista en
-   [`app/db/session.py`](../backend/app/db/session.py). Para mapear entidades a espacios, sigue el
-   patrón de `energy_map.py` (declarar explícitamente qué entidad corresponde a qué espacio).
-4. El resto de la API (schemas, routers, frontend) no cambia.
+### Qué es real y qué sigue en mock
 
-> Referencia: el proyecto original ya hace esto en su `backend/app/db/` y `services/`. La idea es
-> portar esas consultas cuando toque.
+| Dato | Modo BD | Fuente |
+| ---- | ------- | ------ |
+| Energía eléctrica por edificio | **Real** | `statistics.sum` de `sensor.edificio_a` (Fermín Caballero) y `sensor.edificio_b` (Módulo B). |
+| Gas (sitio completo) | **Real** | `statistics.sum` de `sensor.daily_gas` (m³ → kWh con `GAS_KWH_PER_M3`). Solo se sirve para `building=all`; en un edificio concreto el gas es `0` (hay un único contador). |
+| Temperatura exterior (grados-día) | **Real** | `statistics.mean` o, si no hay, `states` de `sensor.temperatura_meteo`. |
+| Temperatura interior por espacio | **Real** | `statistics.mean`/`states` de `sensor.sensor_temperatura_aXX` y `sensor.temperatura_shellyN`. |
+| Humedad interior por espacio | **Real** | `statistics.mean`/`states` de `sensor.sensor_humedad_aXX` y `sensor.humedad_shellyN`. |
+| CO₂ de A11/A12/A21/A22 | **Real** | `states` de `air_quality.co2_3`, `co2_1`, `co2_2` y `co2_4`. |
+| Ocupación por edificio | **Real** | Diferencia de los contadores de entrada/salida (`max(0, entrada − salida)`); Módulo B usa los atributos `LTR_SUM`/`RTL_SUM` de `sensor.contador_personas`. |
+| Reparto de la ocupación por aula | Mock | Los contadores son por edificio; el reparto relativo entre aulas sigue el modelo por superficie. |
+| Electroválvulas | Mock | No existe entidad de válvula en la BD. |
+| Iluminación | Mock | `light.controller1..7` / `sensor.sensor_luz_aXX` existen, pero no hay un mapeo confirmado a cada espacio ni una medida de potencia por circuito. |
+| CO₂ de espacios sin sonda | Mock | Solo A11/A12/A21/A22 tienen sonda; el resto usa el modelo (se documenta así en la respuesta). |
+| Eficiencia (kWh/persona·hora) | **Real** (ocupación) | La energía es real y la ocupación sale de los contadores; el reparto por espacio es por superficie. |
+
+### Cómo se leen los datos
+
+- `db/session.py` fija `SET time_zone='+00:00'`: HA guarda *timestamps* UTC sin zona y la conversión a
+  hora local (Europe/Madrid) se hace en Python.
+- `db/repository.py` contiene las consultas `SELECT`:
+  1. `statistics.sum` por estadístico y rango (energía y gas);
+  2. `statistics.mean` por estadístico y rango (temperaturas/humedad con estadísticas de largo plazo);
+  3. media horaria de un `states` numérico, agrupando con `FLOOR(UNIX_TIMESTAMP(last_updated)/3600)`;
+  4. último valor (numérico o `state` + `attributes`) antes de la ventana, para el *fill-forward*;
+  5. último `state`/`attributes` de cada hora, para los contadores de personas (que no se pueden
+     promediar porque cambian en cada cruce de puerta).
+- `db/database_data.py` convierte esas filas en series `{hora local: valor}`:
+  - **energía**: la diferencia entre dos `sum` consecutivos, repartida entre las horas del hueco
+    (los volcados de HA tras un corte son reales); los valores negativos (reinicio del contador) y
+    los que superan `ENERGY_MAX_KWH_PER_HOUR` se descartan;
+  - **gas**: la diferencia se descarta si supera `GAS_MAX_M3_PER_HOUR` (el `sum` del gas tiene saltos
+    corruptos en algunos periodos) y se convierte a kWh;
+  - **temperaturas/humedad**: media horaria y *fill-forward* del último valor conocido; se prefiere
+    `statistics` y solo se recorre `states` para los sensores sin estadísticas;
+  - **ocupación**: `max(0, entrada − salida)`, acotada al aforo; un contador roto (`unavailable`,
+    atributo ausente) se trata como dato no disponible, no como 0.
+- `db/entity_map.py` declara explícitamente qué entidad corresponde a cada edificio y espacio.
+- En `DATA_SOURCE=mock` nada de esto se importa: no hace falta SQLAlchemy ni driver.
+
+### Rendimiento
+
+Las agregaciones se cachean por `(rango, edificio)`. La lectura del rango `year` en clima se acelera
+con `USE_STATISTICS_FOR_STATES=true`: usa la media horaria ya calculada en `statistics` para las
+temperaturas y evita recorrer un año de `states` de ~22 sensores. Los sensores sin estadísticas
+caen automáticamente a `states`. El clima mantiene además un TTL mínimo de 300 s.
+
+> Referencia: el proyecto original (`pagina-web-Smart-ESI`) hace lo mismo en su `backend/app/db/` y
+> `services/`. Las consultas de aquí son una versión reducida a lo que necesitan estas pestañas.
 
 ## Tests
 
 ```bash
 cd backend
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -t . -v
 ```
 
 Cubren: número de puntos por rango, conversión de métricas (kWh→€/kg CO₂), 404 en edificio
 desconocido, reparto de `share`, rangos de la correlación, endpoints de iluminación, clima y
-decisiones (invariantes de totales y `€`), y salud/meta.
+decisiones (invariantes de totales y `€`), salud/meta, la conversión de series acumuladas a
+consumo horario (reinicios y saltos irreales de los contadores) y la lectura de los contadores de
+ocupación (estado/atributo JSON, reset diario y aforo).

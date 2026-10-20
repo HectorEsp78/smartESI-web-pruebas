@@ -1,7 +1,10 @@
 """Business logic for the climate endpoints (gas, degree-days and valves).
 
-The synthetic model gives every space a heating solenoid valve (electroválvula)
-and an indoor temperature. From that we compute, per bucket:
+With ``DATA_SOURCE=mock`` the synthetic model gives every space a heating valve
+and an indoor temperature. With ``DATA_SOURCE=database`` the gas, the outdoor
+temperature and the indoor temperatures come from the real Home Assistant data;
+the valves (which have no entity in the recorder DB yet) and the occupancy keep
+using the model. From that we compute, per bucket:
 
 - gas consumed, heating degree-days and the outdoor/indoor temperature;
 - the share of valves that are open (demand for heat).
@@ -17,9 +20,11 @@ Everything is computed once per (range, building) and cached.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
+from typing import Any
 
 from app.core.cache import TTLCache
+from app.core.clock import local_tz
 from app.core.config import settings
 from app.core.energy_map import BUILDINGS_BY_ID, SPACES_BY_BUILDING, SPACES_BY_ID
 from app.schemas.climate import (
@@ -38,7 +43,9 @@ from app.services.energy_service import ALL_BUILDINGS, build_buckets, scope_buil
 
 _SETPOINT_TOLERANCE_C = 1.0
 
-_cache = TTLCache(ttl_seconds=settings.STATS_CACHE_TTL_SECONDS)
+# Climate reads can touch a year of per-space ``states`` rows, which is slow on
+# the recorder DB; keep the result cached for a bit longer than the default TTL.
+_cache = TTLCache(ttl_seconds=max(settings.STATS_CACHE_TTL_SECONDS, 300))
 
 
 @dataclass
@@ -67,15 +74,141 @@ class _Acc:
     valve_sample_count: float = 0.0
 
 
-def _accumulate(range_: ClimateRange, building_id: str) -> _Acc:
+@dataclass(frozen=True)
+class _DatabaseSeries:
+    """Real hourly series (keyed by local hour) used when DATA_SOURCE=database."""
+
+    outdoor: dict[datetime, float]
+    gas: dict[datetime, float]
+    space_temps: dict[str, dict[datetime, float]]
+    occupancy: dict[str, dict[datetime, int]]
+
+
+class _ClimateProvider:
+    """Real/synthetic source for outdoor temperature, gas and indoor temps.
+
+    Gas is site-wide in the real installation (there is a single meter), so the
+    caller only loads it for the ``all`` scope; for a specific building the gas
+    series is empty and the gas values are 0.
+    """
+
+    def __init__(self, database: _DatabaseSeries | None) -> None:
+        self._database = database
+
+    def outdoor_temperature(self, when: datetime) -> float | None:
+        if self._database is None:
+            return mock_data.outdoor_temperature(when)
+        return self._database.outdoor.get(_floor_hour_local(when))
+
+    def space_temperature(self, space_id: str, when: datetime) -> float | None:
+        if self._database is None:
+            return None  # signals the caller to use the synthetic model
+        return self._database.space_temps.get(space_id, {}).get(_floor_hour_local(when))
+
+    def gas_kwh(self, when: datetime, scope: list[Any]) -> float:
+        if self._database is None:
+            return sum(mock_data.hour_gas_kwh(building, when) for building in scope)
+        return self._database.gas.get(_floor_hour_local(when), 0.0)
+
+    def building_occupancy(self, building: Any, when: datetime) -> int | None:
+        """People inside the building, or ``None`` to keep using the model."""
+        if self._database is None:
+            return None
+        return self._database.occupancy.get(building.id, {}).get(
+            _floor_hour_local(when)
+        )
+
+
+def _floor_hour_local(value: datetime) -> datetime:
+    return value.astimezone(local_tz()).replace(minute=0, second=0, microsecond=0)
+
+
+def _scale_occupancy(
+    occupancy_map: dict[str, int], target: int | None
+) -> dict[str, int]:
+    """Rescale a per-space occupancy map to the real building total.
+
+    The door counters only know how many people are inside the building, not
+    which room they are in. The synthetic model provides the relative
+    distribution, which is rescaled so its sum matches the real total (0 marks
+    every room as empty). ``None`` keeps the original map.
+    """
+    if target is None:
+        return occupancy_map
+    if target <= 0:
+        return {space_id: 0 for space_id in occupancy_map}
+
+    total = sum(occupancy_map.values())
+    if total <= 0:
+        return occupancy_map
+    scaled = {
+        space_id: int(round(value * target / total))
+        for space_id, value in occupancy_map.items()
+    }
+    # Rounding can lose/gain a person; keep the building total exact by fixing
+    # the largest room.
+    if scaled:
+        largest = max(scaled, key=scaled.get)
+        scaled[largest] += target - sum(scaled.values())
+        scaled[largest] = max(0, scaled[largest])
+    return scaled
+
+
+async def _load_provider(
+    scope: list[Any],
+    building_id: str,
+    start: datetime,
+    end: datetime,
+) -> _ClimateProvider:
+    if settings.DATA_SOURCE != "database":
+        return _ClimateProvider(None)
+
+    # Imported lazily so mock mode never needs SQLAlchemy / a DB driver.
+    from app.db import database_data
+    from app.db.session import AsyncSessionLocal
+
+    space_ids = [
+        space.id for building in scope for space in SPACES_BY_BUILDING.get(building.id, [])
+    ]
+
+    async with AsyncSessionLocal() as session:
+        outdoor = await database_data.load_hourly_outdoor_temperature(session, start, end)
+        space_temps = await database_data.load_hourly_space_temperatures(
+            session, space_ids, start, end
+        )
+        occupancy = await database_data.load_hourly_occupancy(
+            session, [building.id for building in scope], start, end
+        )
+        if building_id in (None, "", ALL_BUILDINGS):
+            gas = await database_data.load_hourly_gas(session, start, end)
+        else:
+            gas = {}
+
+    return _ClimateProvider(
+        _DatabaseSeries(
+            outdoor=outdoor,
+            gas=gas,
+            space_temps=space_temps,
+            occupancy=occupancy,
+        )
+    )
+
+
+async def _accumulate(range_: ClimateRange, building_id: str) -> _Acc:
     cache_key = ("climate", range_, building_id)
-    return _cache.get_or_set(cache_key, lambda: _compute(range_, building_id))
+    hit = _cache.get(cache_key)
+    if hit is not None:
+        return hit
+    value = await _compute(range_, building_id)
+    _cache.set(cache_key, value)
+    return value
 
 
-def _compute(range_: ClimateRange, building_id: str) -> _Acc:
+async def _compute(range_: ClimateRange, building_id: str) -> _Acc:
     buckets = build_buckets(range_)
     scope = scope_buildings(building_id)
     base_temp = settings.HEATING_BASE_TEMPERATURE_C
+    provider = await _load_provider(scope, building_id, buckets[0].start, buckets[-1].end)
 
     result = _Acc()
     for building in scope:
@@ -90,55 +223,57 @@ def _compute(range_: ClimateRange, building_id: str) -> _Acc:
 
         cursor = bucket.start
         while cursor < bucket.end:
-            outdoor = mock_data.outdoor_temperature(cursor)
+            outdoor = provider.outdoor_temperature(cursor)
+            if outdoor is None:
+                outdoor = mock_data.outdoor_temperature(cursor)
             bucket_degree += max(0.0, base_temp - outdoor)
             bucket_outdoor_sum += outdoor
-            hour_temp_sum = 0.0
-            hour_temp_count = 0
 
+            # Gather (space, building, valve, occupancy, temperature) for the hour.
+            details = []
             for building in scope:
-                spaces = SPACES_BY_BUILDING.get(building.id, [])
-                setpoint = building.setpoint_c
-                gas = mock_data.hour_gas_kwh(building, cursor)
-                bucket_gas += gas
                 occupancy_map = mock_data.building_space_occupancy(building, cursor)
-
-                # First pass: valve state, occupancy and temperature per space.
-                details = []
-                for space in spaces:
+                occupancy_map = _scale_occupancy(
+                    occupancy_map, provider.building_occupancy(building, cursor)
+                )
+                for space in SPACES_BY_BUILDING.get(building.id, []):
                     valve_open = mock_data.space_valve_open(space, building, cursor)
                     occupancy = occupancy_map.get(space.id, 0)
-                    temperature = mock_data.space_temperature(
-                        building, space, cursor, occupancy
-                    )
-                    details.append((space, valve_open, occupancy, temperature))
-                    hour_temp_sum += temperature
-                    hour_temp_count += 1
+                    temperature = provider.space_temperature(space.id, cursor)
+                    if temperature is None:
+                        temperature = mock_data.space_temperature(
+                            building, space, cursor, occupancy
+                        )
+                    details.append((space, building, valve_open, occupancy, temperature))
 
-                open_count = sum(1 for _, valve_open, _, _ in details if valve_open)
-                gas_per_open = gas / open_count if open_count else 0.0
-                bucket_valve_open += open_count
-                bucket_valve_sample += len(spaces)
+            gas = provider.gas_kwh(cursor, scope)
+            bucket_gas += gas
+            open_count = sum(1 for _, _, valve_open, _, _ in details if valve_open)
+            gas_per_open = gas / open_count if open_count else 0.0
+            bucket_valve_open += open_count
+            bucket_valve_sample += len(details)
 
-                # Second pass: accumulate per-space statistics (gas share known now).
-                for space, valve_open, occupancy, temperature in details:
-                    acc = result.spaces[space.id]
-                    acc.sample_hours += 1
-                    acc.temp_sum += temperature
-                    acc.outdoor_sum += outdoor
+            if details:
+                bucket_indoor_sum += sum(item[4] for item in details) / len(details)
+
+            # Second pass: accumulate per-space statistics (gas share known now).
+            for space, building, valve_open, occupancy, temperature in details:
+                acc = result.spaces[space.id]
+                acc.sample_hours += 1
+                acc.temp_sum += temperature
+                acc.outdoor_sum += outdoor
+                if valve_open:
+                    acc.valve_open_hours += 1
+                if temperature < building.setpoint_c - _SETPOINT_TOLERANCE_C:
+                    acc.below_setpoint_hours += 1
+
+                if occupancy <= 0:
+                    acc.unoccupied_hours += 1
+                    acc.unoccupied_temp_sum += temperature
                     if valve_open:
-                        acc.valve_open_hours += 1
-                    if temperature < setpoint - _SETPOINT_TOLERANCE_C:
-                        acc.below_setpoint_hours += 1
+                        acc.heated_unoccupied_hours += 1
+                        acc.unoccupied_gas += gas_per_open
 
-                    if occupancy <= 0:
-                        acc.unoccupied_hours += 1
-                        acc.unoccupied_temp_sum += temperature
-                        if valve_open:
-                            acc.heated_unoccupied_hours += 1
-                            acc.unoccupied_gas += gas_per_open
-
-            bucket_indoor_sum += hour_temp_sum / hour_temp_count if hour_temp_count else 0.0
             cursor += timedelta(hours=1)
 
         result.series.append(
@@ -168,8 +303,8 @@ def _compute(range_: ClimateRange, building_id: str) -> _Acc:
     return result
 
 
-def build_gas(range_: ClimateRange, building_id: str) -> GasResponse:
-    data = _accumulate(range_, building_id)
+async def build_gas(range_: ClimateRange, building_id: str) -> GasResponse:
+    data = await _accumulate(range_, building_id)
 
     gas_values = [point.gas for point in data.series]
     degree_values = [point.degree_days for point in data.series]
@@ -203,8 +338,8 @@ def build_gas(range_: ClimateRange, building_id: str) -> GasResponse:
     )
 
 
-def build_valves(range_: ClimateRange, building_id: str) -> ValvesResponse:
-    data = _accumulate(range_, building_id)
+async def build_valves(range_: ClimateRange, building_id: str) -> ValvesResponse:
+    data = await _accumulate(range_, building_id)
     scope = scope_buildings(building_id)
     setpoint = scope[0].setpoint_c if scope else 21.0
 
@@ -266,8 +401,8 @@ def build_valves(range_: ClimateRange, building_id: str) -> ValvesResponse:
     )
 
 
-def build_empty_spaces(range_: ClimateRange, building_id: str) -> EmptySpacesResponse:
-    data = _accumulate(range_, building_id)
+async def build_empty_spaces(range_: ClimateRange, building_id: str) -> EmptySpacesResponse:
+    data = await _accumulate(range_, building_id)
     days = {"day": 1, "week": 7, "month": 30, "year": 365}[range_]
     price = settings.GAS_PRICE_EUR_PER_KWH
 

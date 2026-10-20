@@ -8,8 +8,10 @@ The heavy aggregation is cached with a short TTL (see ``app.core.cache``).
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from app.core.cache import TTLCache
 from app.core.clock import local_now, local_tz
@@ -77,6 +79,11 @@ def _floor_hour(value: datetime) -> datetime:
     return value.replace(minute=0, second=0, microsecond=0)
 
 
+def _floor_hour_local(value: datetime) -> datetime:
+    """Floor to the hour in the school's timezone (DB series are local-keyed)."""
+    return value.astimezone(local_tz()).replace(minute=0, second=0, microsecond=0)
+
+
 def _floor_day(value: datetime) -> datetime:
     return value.replace(hour=0, minute=0, second=0, microsecond=0)
 
@@ -128,11 +135,86 @@ def scope_buildings(building_id: str | None) -> list[BuildingConfig]:
     return [building] if building else []
 
 
-def _sum_energy(building: BuildingConfig, start: datetime, end: datetime) -> float:
+class _EnergyProvider:
+    """Hourly kWh source: the real database series or the synthetic generator.
+
+    The synthetic path keeps working exactly as before; the database path just
+    looks the hour up in a preloaded ``{building_id: {local_hour: kwh}}`` dict.
+    """
+
+    def __init__(self, database: dict[str, dict[datetime, float]] | None) -> None:
+        self._database = database
+
+    def hour_kwh(self, building: BuildingConfig, when: datetime) -> float:
+        if self._database is None:
+            return mock_data.hour_energy_kwh(building, when)
+        return self._database.get(building.id, {}).get(_floor_hour_local(when), 0.0)
+
+
+class _OccupancyProvider:
+    """Hourly people count: the real counters or the synthetic model."""
+
+    def __init__(self, database: dict[str, dict[datetime, int]] | None) -> None:
+        self._database = database
+
+    def hour_occupancy(self, building: BuildingConfig, when: datetime) -> int:
+        if self._database is not None:
+            value = self._database.get(building.id, {}).get(_floor_hour_local(when))
+            if value is not None:
+                return value
+        return mock_data.hour_occupancy(building, when)
+
+
+async def _load_provider(
+    scope: list[BuildingConfig], start: datetime, end: datetime
+) -> _EnergyProvider:
+    """Build the provider for a window, reading the real DB when configured."""
+    if settings.DATA_SOURCE != "database":
+        return _EnergyProvider(None)
+
+    # Imported lazily so mock mode never needs SQLAlchemy / a DB driver.
+    from app.db import database_data
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        data = await database_data.load_hourly_energy(
+            session, [building.id for building in scope], start, end
+        )
+    return _EnergyProvider(data)
+
+
+async def load_occupancy_provider(
+    scope: list[BuildingConfig], start: datetime, end: datetime
+) -> _OccupancyProvider:
+    """Real occupancy counters when available, synthetic model otherwise."""
+    if settings.DATA_SOURCE != "database":
+        return _OccupancyProvider(None)
+
+    from app.db import database_data
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        data = await database_data.load_hourly_occupancy(
+            session, [building.id for building in scope], start, end
+        )
+    return _OccupancyProvider(data)
+
+
+async def _cached(cache: TTLCache, key: Hashable, factory: Callable[[], Awaitable[Any]]) -> Any:
+    """Await-able ``TTLCache.get_or_set`` (the factory has to await the DB)."""
+    hit = cache.get(key)
+    if hit is not None:
+        return hit
+    value = await factory()
+    cache.set(key, value)
+    return value
+
+
+def _sum_energy(provider: _EnergyProvider, building: BuildingConfig, start: datetime, end: datetime) -> float:
     total = 0.0
     cursor = start
     while cursor < end:
-        total += mock_data.hour_energy_kwh(building, cursor)
+        total += provider.hour_kwh(building, cursor)
         cursor += timedelta(hours=1)
     return total
 
@@ -159,18 +241,22 @@ def _space_weights(building_id: str, range_: EnergyRange) -> dict[str, float]:
     return {space_id: value / total for space_id, value in raw.items()}
 
 
-def build_consumption(
+async def build_consumption(
     range_: EnergyRange, building_id: str, metric: EnergyMetric
 ) -> EnergyConsumptionResponse:
     cache_key = ("consumption", range_, building_id, metric)
 
-    def _compute() -> EnergyConsumptionResponse:
+    async def _compute() -> EnergyConsumptionResponse:
         buckets = build_buckets(range_)
         scope = scope_buildings(building_id)
+        provider = await _load_provider(scope, buckets[0].start, buckets[-1].end)
 
         series: list[EnergyPoint] = []
         for bucket in buckets:
-            kwh = sum(_sum_energy(building, bucket.start, bucket.end) for building in scope)
+            kwh = sum(
+                _sum_energy(provider, building, bucket.start, bucket.end)
+                for building in scope
+            )
             series.append(
                 EnergyPoint(timestamp=bucket.start, value=round(_convert(kwh, metric), 2))
             )
@@ -191,18 +277,21 @@ def build_consumption(
             series=series,
         )
 
-    return _cache.get_or_set(cache_key, _compute)
+    return await _cached(_cache, cache_key, _compute)
 
 
-def build_by_building(range_: EnergyRange, metric: EnergyMetric) -> EnergyByBuildingResponse:
+async def build_by_building(range_: EnergyRange, metric: EnergyMetric) -> EnergyByBuildingResponse:
     cache_key = ("by-building", range_, metric)
 
-    def _compute() -> EnergyByBuildingResponse:
+    async def _compute() -> EnergyByBuildingResponse:
         buckets = build_buckets(range_)
         start = buckets[0].start
         end = buckets[-1].end
+        provider = await _load_provider(list(BUILDINGS), start, end)
 
-        building_kwh = {building.id: _sum_energy(building, start, end) for building in BUILDINGS}
+        building_kwh = {
+            building.id: _sum_energy(provider, building, start, end) for building in BUILDINGS
+        }
         total_kwh = sum(building_kwh.values())
 
         buildings: list[BuildingShare] = []
@@ -246,7 +335,7 @@ def build_by_building(range_: EnergyRange, metric: EnergyMetric) -> EnergyByBuil
             spaces=spaces,
         )
 
-    return _cache_database.get_or_set(cache_key, _compute)
+    return await _cached(_cache_database, cache_key, _compute)
 
 
 def _is_active_hour(when: datetime) -> bool:
@@ -256,19 +345,26 @@ def _is_active_hour(when: datetime) -> bool:
     return local.weekday() < 5 and 7.0 <= hour < 21.0
 
 
-def _split_energy(building: BuildingConfig, start: datetime, end: datetime) -> tuple[float, float, float]:
+def _split_energy(
+    provider: _EnergyProvider,
+    occupancy_provider: _OccupancyProvider,
+    building: BuildingConfig,
+    start: datetime,
+    end: datetime,
+) -> tuple[float, float, float]:
     """Return (base_kwh, activity_kwh, lighting_kwh) for a building over a span.
 
     ``base`` is the load outside working hours (nights/weekends) and ``activity``
     the load during working hours. ``lighting`` is the part of the total that the
-    model attributes to luminarias.
+    model attributes to luminarias (still estimated while there is no real
+    lighting submetering).
     """
     base = activity = lighting = 0.0
     cursor = start
     while cursor < end:
-        occupancy = mock_data.hour_occupancy(building, cursor)
+        occupancy = occupancy_provider.hour_occupancy(building, cursor)
         ratio = occupancy / building.max_capacity if building.max_capacity else 0.0
-        total = mock_data.hour_energy_kwh(building, cursor)
+        total = provider.hour_kwh(building, cursor)
         lighting += total * mock_data.lighting_fraction(building, cursor, ratio)
         if _is_active_hour(cursor):
             activity += total
@@ -278,19 +374,23 @@ def _split_energy(building: BuildingConfig, start: datetime, end: datetime) -> t
     return base, activity, lighting
 
 
-def build_breakdown(range_: EnergyRange, building_id: str) -> EnergyBreakdownResponse:
+async def build_breakdown(range_: EnergyRange, building_id: str) -> EnergyBreakdownResponse:
     cache_key = ("breakdown", range_, building_id)
 
-    def _compute() -> EnergyBreakdownResponse:
+    async def _compute() -> EnergyBreakdownResponse:
         buckets = build_buckets(range_)
         scope = scope_buildings(building_id)
+        provider = await _load_provider(scope, buckets[0].start, buckets[-1].end)
+        occupancy_provider = await load_occupancy_provider(
+            scope, buckets[0].start, buckets[-1].end
+        )
 
         series: list[EnergyBreakdownPoint] = []
         for bucket in buckets:
             base = activity = lighting = 0.0
             for building in scope:
                 base_part, activity_part, lighting_part = _split_energy(
-                    building, bucket.start, bucket.end
+                    provider, occupancy_provider, building, bucket.start, bucket.end
                 )
                 base += base_part
                 activity += activity_part
@@ -326,7 +426,7 @@ def build_breakdown(range_: EnergyRange, building_id: str) -> EnergyBreakdownRes
             series=series,
         )
 
-    return _cache.get_or_set(cache_key, _compute)
+    return await _cached(_cache, cache_key, _compute)
 
 
 def _shift_start(start: datetime, range_: EnergyRange) -> datetime:
@@ -339,23 +439,30 @@ def _shift_start(start: datetime, range_: EnergyRange) -> datetime:
     return _add_months(start, -12)  # year: same month of the previous year
 
 
-def build_compare(
+async def build_compare(
     range_: EnergyRange, building_id: str, metric: EnergyMetric
 ) -> EnergyCompareResponse:
     cache_key = ("compare", range_, building_id, metric)
 
-    def _compute() -> EnergyCompareResponse:
+    async def _compute() -> EnergyCompareResponse:
         buckets = build_buckets(range_)
         scope = scope_buildings(building_id)
+        # The provider must cover the previous period too (up to 12 months back).
+        provider = await _load_provider(
+            scope, _shift_start(buckets[0].start, range_), buckets[-1].end
+        )
 
         points: list[EnergyComparePoint] = []
         current_total = previous_total = 0.0
         for bucket in buckets:
-            current = sum(_sum_energy(building, bucket.start, bucket.end) for building in scope)
+            current = sum(
+                _sum_energy(provider, building, bucket.start, bucket.end) for building in scope
+            )
             previous_start = _shift_start(bucket.start, range_)
             previous_end = previous_start + (bucket.end - bucket.start)
             previous = sum(
-                _sum_energy(building, previous_start, previous_end) for building in scope
+                _sum_energy(provider, building, previous_start, previous_end)
+                for building in scope
             )
             current_total += current
             previous_total += previous
@@ -382,33 +489,42 @@ def build_compare(
             series=points,
         )
 
-    return _cache.get_or_set(cache_key, _compute)
+    return await _cached(_cache, cache_key, _compute)
 
 
-def _occupancy_person_hours(building: BuildingConfig, start: datetime, end: datetime) -> float:
+def _occupancy_person_hours(
+    occupancy_provider: _OccupancyProvider,
+    building: BuildingConfig,
+    start: datetime,
+    end: datetime,
+) -> float:
     total = 0.0
     cursor = start
     while cursor < end:
-        total += mock_data.hour_occupancy(building, cursor)
+        total += occupancy_provider.hour_occupancy(building, cursor)
         cursor += timedelta(hours=1)
     return total
 
 
-def build_efficiency(range_: EnergyRange) -> EnergyEfficiencyResponse:
+async def build_efficiency(range_: EnergyRange) -> EnergyEfficiencyResponse:
     cache_key = ("efficiency", range_)
 
-    def _compute() -> EnergyEfficiencyResponse:
+    async def _compute() -> EnergyEfficiencyResponse:
         buckets = build_buckets(range_)
         start = buckets[0].start
         end = buckets[-1].end
+        provider = await _load_provider(list(BUILDINGS), start, end)
+        occupancy_provider = await load_occupancy_provider(list(BUILDINGS), start, end)
 
         buildings: list[BuildingEfficiency] = []
         spaces: list[SpaceEfficiency] = []
         total_kwh = 0.0
 
         for building in BUILDINGS:
-            building_kwh = _sum_energy(building, start, end)
-            building_occupancy_hours = _occupancy_person_hours(building, start, end)
+            building_kwh = _sum_energy(provider, building, start, end)
+            building_occupancy_hours = _occupancy_person_hours(
+                occupancy_provider, building, start, end
+            )
             area = BUILDINGS_AREA_M2[building.id]
             total_kwh += building_kwh
 
@@ -470,7 +586,7 @@ def build_efficiency(range_: EnergyRange) -> EnergyEfficiencyResponse:
             spaces=spaces,
         )
 
-    return _cache.get_or_set(cache_key, _compute)
+    return await _cached(_cache, cache_key, _compute)
 
 
 def clear_cache() -> None:

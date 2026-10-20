@@ -7,15 +7,16 @@ flowchart LR
     U[Navegador] -->|"http://localhost:5174"| FE[Frontend React + Vite]
     FE -->|"fetch /api/v1/... (proxy Vite)"| BE[Backend FastAPI 127.0.0.1:8010]
     BE -->|DATA_SOURCE=mock| GEN[Generador de datos sintéticos]
-    BE -.->|"DATA_SOURCE=database (futuro)"| DB[(MariaDB · Home Assistant recorder)]
+    BE -.->|"DATA_SOURCE=database (Electricidad, Clima/gas, Ocupación y CO₂)"| DB[(MariaDB · Home Assistant recorder)]
 ```
 
 1. El **frontend** (SPA React compilada con Vite) consume la API mediante `fetch` y gestiona caché,
    reintentos y refresco con **TanStack Query**.
 2. En desarrollo, el **proxy de Vite** redirige `/api/*` al backend en `127.0.0.1:8010`.
-3. El **backend FastAPI** calcula las agregaciones. Con `DATA_SOURCE=mock` genera datos
-   sintéticos; cuando se habilite `DATA_SOURCE=database`, leerá de la base de datos real de Home
-   Assistant (solo lectura).
+3. El **backend FastAPI** calcula las agregaciones. Con `DATA_SOURCE=mock` genera datos sintéticos;
+   con `DATA_SOURCE=database` lee de la base de datos real de Home Assistant (solo lectura) la
+   energía, el gas, las temperaturas, la humedad, la ocupación y el CO₂. Ver
+   [`backend.md`](backend.md) y [`datos.md`](datos.md).
 4. Cada respuesta es JSON bajo `/api/v1` y está descrita con **Pydantic** (contrato de la API).
 
 El origen de los datos sintéticos y el plan de migración están en [`datos.md`](datos.md). El catálogo
@@ -47,7 +48,12 @@ smartesi-stats/
 │   │   │   ├── clock.py        Utilidades de tiempo (UTC vs. hora local Europe/Madrid)
 │   │   │   ├── cache.py        Caché TTL en memoria para las series agregadas
 │   │   │   └── energy_map.py   Catálogo de edificios y espacios (+ área y luminarias)
-│   │   ├── db/session.py       Sesión SQLAlchemy async (solo DATA_SOURCE=database)
+│   │   ├── db/                 Acceso a la BD real (solo DATA_SOURCE=database)
+│   │   │   ├── session.py          Sesión SQLAlchemy async + TLS + time zone UTC
+│   │   │   ├── entity_map.py       Entidad de HA ↔ edificio/espacio
+│   │   │   ├── repository.py       Consultas SELECT (agregación horaria)
+│   │   │   └── database_data.py    Filas → series horarias en hora local
+│   │   ├── models/ha.py        Modelos de states / statistics / statistics_meta
 │   │   ├── schemas/            Modelos Pydantic de respuesta
 │   │   └── services/
 │   │       ├── mock_data.py        Generador determinista de datos sintéticos

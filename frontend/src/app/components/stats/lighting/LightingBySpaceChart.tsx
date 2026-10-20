@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import { ChartCard } from '../../ui/ChartCard';
+import { ExportCsvButton } from '../../ui/ExportCsvButton';
 import { SelectField } from '../../ui/SelectField';
 import { useBuildings } from '../../../hooks/useBuildings';
 import { useLightingBySpace } from '../../../hooks/useLighting';
@@ -38,13 +39,41 @@ export function LightingBySpaceChart() {
   const topSpaces = (data?.spaces ?? []).slice(0, 10);
   const isEmpty = !data || data.spaces.length === 0;
 
+  const exportRows = (data?.spaces ?? []).map((space) => [
+    space.label,
+    space.building_label,
+    space.kind,
+    space.area_m2,
+    space.lighting,
+    space.share_of_lighting,
+    space.share_of_building,
+    space.cost_eur,
+  ]);
+
   const controls = (
-    <SelectField
-      label="Edificio"
-      value={building}
-      onChange={setBuilding}
-      options={buildingOptions}
-    />
+    <div className="flex flex-wrap items-end gap-3">
+      <SelectField
+        label="Edificio"
+        value={building}
+        onChange={setBuilding}
+        options={buildingOptions}
+      />
+      <ExportCsvButton
+        filename={`iluminacion-espacios-${range}-${building}.csv`}
+        headers={[
+          'Espacio',
+          'Edificio',
+          'Tipo',
+          'Superficie m²',
+          'Iluminación kWh',
+          'Cuota de iluminación',
+          'Cuota del edificio',
+          'Coste €',
+        ]}
+        rows={exportRows}
+        disabled={!data}
+      />
+    </div>
   );
 
   return (

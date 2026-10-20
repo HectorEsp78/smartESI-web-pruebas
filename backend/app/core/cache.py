@@ -24,5 +24,21 @@ class TTLCache:
         self._store[key] = (now, value)
         return value
 
+    def get(self, key: Hashable, default: Any = None) -> Any:
+        """Return a live entry without computing it, or ``default``.
+
+        Used by the async services, where the value cannot be produced inside a
+        synchronous ``get_or_set`` factory (the factory has to ``await``).
+        """
+        entry = self._store.get(key)
+        if entry is None or (time.monotonic() - entry[0]) >= self._ttl:
+            return default
+        return entry[1]
+
+    def set(self, key: Hashable, value: Any) -> None:
+        if len(self._store) >= self._max_entries:
+            self._store.clear()
+        self._store[key] = (time.monotonic(), value)
+
     def clear(self) -> None:
         self._store.clear()

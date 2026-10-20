@@ -1,3 +1,4 @@
+import logging
 import os
 from urllib.parse import urlparse
 
@@ -12,6 +13,8 @@ from app.core.config import settings
 from app.schemas.health import HealthLiveResponse, HealthReadyResponse
 
 SERVICE_NAME = "smartesi-stats-backend"
+
+logger = logging.getLogger(__name__)
 
 
 def _service_version() -> str:
@@ -65,11 +68,41 @@ async def health_live() -> HealthLiveResponse:
     return HealthLiveResponse(version=_service_version(), data_source=settings.DATA_SOURCE)
 
 
-@app.get("/health/ready", response_model=HealthReadyResponse)
-async def health_ready() -> HealthReadyResponse:
-    # In mock mode the service is always ready. When DATA_SOURCE=database this
-    # should run `SELECT 1` against the recorder DB and report "degraded" on failure.
+@app.get(
+    "/health/ready",
+    response_model=HealthReadyResponse,
+    responses={503: {"model": HealthReadyResponse}},
+)
+async def health_ready() -> HealthReadyResponse | JSONResponse:
+    """Readiness probe: in database mode it really pings the recorder DB."""
+    if settings.DATA_SOURCE != "database":
+        return HealthReadyResponse(status="ok", checks={"data_source": "ok"})
+
+    try:
+        from sqlalchemy import text
+
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("Database readiness check failed")
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "checks": {"data_source": "fail"}},
+        )
+
     return HealthReadyResponse(status="ok", checks={"data_source": "ok"})
+
+
+@app.on_event("shutdown")
+async def _dispose_database_engine() -> None:
+    """Close the pooled DB connections when running against the recorder DB."""
+    if settings.DATA_SOURCE != "database":
+        return
+    from app.db.session import engine
+
+    await engine.dispose()
 
 
 @app.exception_handler(RequestValidationError)

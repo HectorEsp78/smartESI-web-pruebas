@@ -9,6 +9,7 @@ import {
   YAxis,
 } from 'recharts';
 import { ChartCard } from '../../ui/ChartCard';
+import { ExportCsvButton } from '../../ui/ExportCsvButton';
 import { StatCard } from '../../ui/StatCard';
 import { useEnergyEfficiency } from '../../../hooks/useEnergyStats';
 import { useGlobalRange } from '../../../context/RangeContext';
@@ -29,6 +30,18 @@ export function EnergyEfficiencyChart() {
   const topSpaces = (data?.spaces ?? []).slice(0, 10);
   const worst = data?.spaces[0] ?? null;
   const isEmpty = !data || data.spaces.length === 0;
+
+  const exportRows = (data?.spaces ?? []).map((space) => [
+    space.label,
+    space.building_label,
+    space.kind,
+    space.area_m2,
+    space.total,
+    space.cost_eur,
+    space.occupancy_hours,
+    space.kwh_per_m2,
+    space.kwh_per_person_hour,
+  ]);
 
   return (
     <div className="space-y-4">
@@ -56,6 +69,24 @@ export function EnergyEfficiencyChart() {
         title="Consumo por superficie (kWh/m²)"
         subtitle={`${copy.title} · espacios con mayor consumo por metro cuadrado`}
         unit="kWh/m²"
+        headerExtra={
+          <ExportCsvButton
+            filename={`eficiencia-${range}.csv`}
+            headers={[
+              'Espacio',
+              'Edificio',
+              'Tipo',
+              'Superficie m²',
+              'Consumo kWh',
+              'Coste €',
+              'Horas-persona',
+              'kWh/m²',
+              'kWh/persona·hora',
+            ]}
+            rows={exportRows}
+            disabled={!data}
+          />
+        }
         isLoading={isLoading}
         error={error}
         isEmpty={isEmpty}

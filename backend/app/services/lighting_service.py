@@ -29,7 +29,12 @@ from app.schemas.lighting import (
     LightingWasteSpace,
 )
 from app.services import mock_data
-from app.services.energy_service import ALL_BUILDINGS, build_buckets, scope_buildings
+from app.services.energy_service import (
+    ALL_BUILDINGS,
+    build_buckets,
+    load_occupancy_provider,
+    scope_buildings,
+)
 
 DAYS_BY_RANGE: dict[LightingRange, int] = {"day": 1, "week": 7, "month": 30, "year": 365}
 
@@ -53,15 +58,23 @@ class _Accumulated:
     spaces: dict[str, _SpaceAcc] = field(default_factory=dict)
 
 
-def _accumulate(range_: LightingRange, building_id: str) -> _Accumulated:
+async def _accumulate(range_: LightingRange, building_id: str) -> _Accumulated:
     cache_key = ("lighting", range_, building_id)
-    return _cache.get_or_set(cache_key, lambda: _compute(range_, building_id))
+    hit = _cache.get(cache_key)
+    if hit is not None:
+        return hit
+    value = await _compute(range_, building_id)
+    _cache.set(cache_key, value)
+    return value
 
 
-def _compute(range_: LightingRange, building_id: str) -> _Accumulated:
+async def _compute(range_: LightingRange, building_id: str) -> _Accumulated:
     buckets = build_buckets(range_)
     scope = scope_buildings(building_id)
     capacity_total = sum(building.max_capacity for building in scope)
+    occupancy_provider = await load_occupancy_provider(
+        scope, buckets[0].start, buckets[-1].end
+    )
 
     result = _Accumulated()
     for building in scope:
@@ -85,7 +98,7 @@ def _compute(range_: LightingRange, building_id: str) -> _Accumulated:
             spaces = SPACES_BY_BUILDING.get(building.id, [])
             cursor = bucket.start
             while cursor < bucket.end:
-                occupancy = mock_data.hour_occupancy(building, cursor)
+                occupancy = occupancy_provider.hour_occupancy(building, cursor)
                 ratio = occupancy / building.max_capacity if building.max_capacity else 0.0
                 total = mock_data.hour_energy_kwh(building, cursor)
                 fraction = mock_data.lighting_fraction(building, cursor, ratio)
@@ -136,8 +149,10 @@ def _compute(range_: LightingRange, building_id: str) -> _Accumulated:
     return result
 
 
-def build_consumption(range_: LightingRange, building_id: str) -> LightingConsumptionResponse:
-    data = _accumulate(range_, building_id)
+async def build_consumption(
+    range_: LightingRange, building_id: str
+) -> LightingConsumptionResponse:
+    data = await _accumulate(range_, building_id)
     return LightingConsumptionResponse(
         range=range_,
         building_id=building_id or ALL_BUILDINGS,
@@ -152,8 +167,10 @@ def build_consumption(range_: LightingRange, building_id: str) -> LightingConsum
     )
 
 
-def build_by_space(range_: LightingRange, building_id: str) -> LightingBySpaceResponse:
-    data = _accumulate(range_, building_id)
+async def build_by_space(
+    range_: LightingRange, building_id: str
+) -> LightingBySpaceResponse:
+    data = await _accumulate(range_, building_id)
     lighting_total = data.lighting_total
 
     spaces: list[LightingSpace] = []
@@ -191,8 +208,10 @@ def build_by_space(range_: LightingRange, building_id: str) -> LightingBySpaceRe
     )
 
 
-def build_waste(range_: LightingRange, building_id: str) -> LightingWasteResponse:
-    data = _accumulate(range_, building_id)
+async def build_waste(
+    range_: LightingRange, building_id: str
+) -> LightingWasteResponse:
+    data = await _accumulate(range_, building_id)
     days = DAYS_BY_RANGE[range_]
     price = settings.ENERGY_PRICE_EUR_PER_KWH
 

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ExportCsvButton } from '../../ui/ExportCsvButton';
 import { SelectField } from '../../ui/SelectField';
 import { StatCard } from '../../ui/StatCard';
 import { useBuildings } from '../../../hooks/useBuildings';
@@ -38,6 +39,18 @@ export function DecisionsPanel() {
     ...(meta?.buildings ?? []).map((item) => ({ value: item.id, label: item.label })),
   ];
 
+  const exportRows = (data?.items ?? []).map((item) => [
+    CATEGORY_LABEL[item.category],
+    PRIORITY_LABEL[item.priority],
+    item.title,
+    item.description,
+    item.evidence,
+    item.metric_value,
+    item.metric_unit,
+    item.savings_kwh_year,
+    item.savings_eur_year,
+  ]);
+
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-slate-200 bg-white p-5 shadow-none">
@@ -50,12 +63,30 @@ export function DecisionsPanel() {
               Cruces de datos traducidos a euros al año, ordenados por impacto.
             </p>
           </div>
-          <SelectField
-            label="Edificio"
-            value={building}
-            onChange={setBuilding}
-            options={buildingOptions}
-          />
+          <div className="flex flex-wrap items-end gap-3">
+            <SelectField
+              label="Edificio"
+              value={building}
+              onChange={setBuilding}
+              options={buildingOptions}
+            />
+            <ExportCsvButton
+              filename={`decisiones-${range}-${building}.csv`}
+              headers={[
+                'Categoría',
+                'Prioridad',
+                'Medida',
+                'Descripción',
+                'Evidencia',
+                'Valor',
+                'Unidad',
+                'Ahorro kWh/año',
+                'Ahorro €/año',
+              ]}
+              rows={exportRows}
+              disabled={!data}
+            />
+          </div>
         </div>
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">

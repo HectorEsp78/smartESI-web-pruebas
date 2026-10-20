@@ -24,27 +24,27 @@ def _validate_building(building_id: str) -> None:
 
 
 @router.get("/gas", response_model=GasResponse)
-def get_gas(
+async def get_gas(
     range_: ClimateRange = Query("day", alias="range"),
     building: str = ALL_BUILDINGS,
 ) -> GasResponse:
     _validate_building(building)
-    return climate_service.build_gas(range_, building)
+    return await climate_service.build_gas(range_, building)
 
 
 @router.get("/valves", response_model=ValvesResponse)
-def get_valves(
+async def get_valves(
     range_: ClimateRange = Query("day", alias="range"),
     building: str = ALL_BUILDINGS,
 ) -> ValvesResponse:
     _validate_building(building)
-    return climate_service.build_valves(range_, building)
+    return await climate_service.build_valves(range_, building)
 
 
 @router.get("/empty-spaces", response_model=EmptySpacesResponse)
-def get_empty_spaces(
+async def get_empty_spaces(
     range_: ClimateRange = Query("day", alias="range"),
     building: str = ALL_BUILDINGS,
 ) -> EmptySpacesResponse:
     _validate_building(building)
-    return climate_service.build_empty_spaces(range_, building)
+    return await climate_service.build_empty_spaces(range_, building)

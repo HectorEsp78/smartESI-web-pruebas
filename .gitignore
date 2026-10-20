@@ -1,0 +1,18 @@
+# Secretos y entorno local
+.env
+.env.local
+deploy/.env
+.venv/
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Node / build
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
