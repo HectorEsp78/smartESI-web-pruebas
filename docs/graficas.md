@@ -80,7 +80,9 @@ Barras horizontales de **kWh/m²** por espacio (top) y tabla con kWh/persona·ho
 **Componente:** `EnergyByBuildingChart` · **Endpoint:** `/energy/by-building`
 
 Barras por edificio, barras horizontales (top de espacios) y tabla de detalle con el **% sobre el
-total**. Comparte los selectores de edificio y métrica.
+total**. Comparte los selectores de edificio y métrica. El total procede de `sensor.cuadro_general`;
+los contadores A/B son parciales, así que la gráfica añade **“No desglosado”** y muestra el
+porcentaje de cobertura (`coverage`) para que el reparto sume el total real.
 
 **Decisiones:** repartir el esfuerzo de eficiencia donde más impacto tiene y detectar espacios fuera
 de lo normal.

@@ -10,6 +10,7 @@ import {
 } from 'recharts';
 import { ChartCard } from '../ui/ChartCard';
 import { RangeSelector } from '../ui/RangeSelector';
+import { PartialMeterNote } from '../ui/PartialMeterNote';
 import { SelectField } from '../ui/SelectField';
 import { StatCard } from '../ui/StatCard';
 import { useBuildings } from '../../hooks/useBuildings';
@@ -95,6 +96,8 @@ export function EnergyConsumptionChart() {
           tone="accent"
         />
       </div>
+
+      {building !== ALL_BUILDINGS && <PartialMeterNote />}
 
       <ChartCard
         title={`${METRIC_LABEL[metric]} energético`}

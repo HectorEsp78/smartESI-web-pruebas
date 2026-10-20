@@ -89,10 +89,10 @@ Prefijo común: `/api/v1`.
 | ------ | ---- | ---------- | -------- |
 | GET | `/meta/buildings` | — | Edificios (id, label, aforo, área, luminarias, consigna) y espacios (id, label, edificio, tipo, área, luminarias, válvula). |
 | GET | `/energy/consumption` | `range`, `building=all\|<id>`, `metric=kwh\|cost\|co2` | `series` (timestamp, value), `total`, `average`, `peak`, `unit`, `granularity`. |
-| GET | `/energy/by-building` | `range`, `metric` | Totales y `share` por edificio + por espacio. |
+| GET | `/energy/by-building` | `range`, `metric` | `total` del cuadro general, `submetered_total`, `unmetered_total`, `coverage`, y `share` por edificio + espacio. |
 | GET | `/energy/breakdown` | `range`, `building` | `series` (base, activity, lighting, other), totales y cuotas de carga base e iluminación. |
 | GET | `/energy/compare` | `range`, `building`, `metric` | `series` (current, previous), `current_total`, `previous_total`, `delta_pct`. |
-| GET | `/energy/efficiency` | `range` | kWh/m² y kWh/persona·hora por edificio y por espacio. |
+| GET | `/energy/efficiency` | `range` | kWh/m² y kWh/persona·hora por edificio y por espacio; `coverage` del desglose respecto al total. |
 | GET | `/lighting/consumption` | `range`, `building` | `series` (lighting, other, total, occupancy_pct, daylight_hours) y KPIs de luminarias. |
 | GET | `/lighting/by-space` | `range`, `building` | Ranking de espacios por consumo de luminarias y sus cuotas. |
 | GET | `/lighting/waste` | `range`, `building` | Luz sin ocupación, cuota, coste y `€/año` por espacio. |

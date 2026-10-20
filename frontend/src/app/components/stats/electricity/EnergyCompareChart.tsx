@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import { ChartCard } from '../../ui/ChartCard';
+import { PartialMeterNote } from '../../ui/PartialMeterNote';
 import { RangeSelector } from '../../ui/RangeSelector';
 import { SelectField } from '../../ui/SelectField';
 import { StatCard } from '../../ui/StatCard';
@@ -90,6 +91,8 @@ export function EnergyCompareChart() {
           tone={isUp ? 'accent' : 'success'}
         />
       </div>
+
+      {building !== ALL_BUILDINGS && <PartialMeterNote />}
 
       <ChartCard
         title="Comparativa con el periodo anterior"

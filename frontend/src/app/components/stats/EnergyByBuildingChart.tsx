@@ -18,7 +18,7 @@ import {
   ENERGY_METRICS,
   METRIC_LABEL,
 } from '../../types/energy';
-import type { EnergyMetric } from '../../types/energy';
+import type { BuildingShareDto, EnergyMetric } from '../../types/energy';
 import { AXIS_LINE, AXIS_TICK, TOOLTIP_STYLE, buildingColor } from '../../lib/chartTheme';
 import {
   RANGE_FORMATTING,
@@ -43,12 +43,24 @@ export function EnergyByBuildingChart() {
   const { data, isLoading, error, retry } = useEnergyByBuilding(range, metric);
   const copy = RANGE_FORMATTING[range];
 
-  const buildings = (data?.buildings ?? []).map((building) => ({
+  type ChartBuilding = BuildingShareDto & { short: string };
+
+  const buildings: ChartBuilding[] = (data?.buildings ?? []).map((building) => ({
     ...building,
     short: shortLabel(building.label),
   }));
+  if (data && data.unmetered_total > 0.01) {
+    buildings.push({
+      building_id: 'unmetered',
+      label: 'No desglosado',
+      total: data.unmetered_total,
+      share: data.total ? data.unmetered_total / data.total : 0,
+      short: 'No desglosado',
+    });
+  }
   const topSpaces = (data?.spaces ?? []).slice(0, 8);
-  const isEmpty = !data || data.buildings.length === 0;
+  const isEmpty = !data || (data.buildings.length === 0 && data.spaces.length === 0);
+  const hasUnmetered = Boolean(data && data.unmetered_total > 0.01);
 
   const controls = (
     <div className="flex flex-wrap items-center gap-3">
@@ -66,7 +78,7 @@ export function EnergyByBuildingChart() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ChartCard
           title="Consumo por edificio"
-          subtitle={`${copy.title} · reparto entre edificios`}
+          subtitle={`${copy.title} · reparto entre subcontadores y resto no desglosado`}
           unit={data?.unit}
           headerExtra={controls}
           isLoading={isLoading}
@@ -161,6 +173,14 @@ export function EnergyByBuildingChart() {
         </ChartCard>
       </div>
 
+      {hasUnmetered && data && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          El total procede del cuadro general. Los contadores A/B son subcontadores parciales y
+          cubren el {formatPercent(data.coverage * 100, 1)} del total; el resto se muestra como
+          «No desglosado».
+        </p>
+      )}
+
       {data && !isEmpty && (
         <div className="rounded-md border border-slate-200 bg-white p-5 shadow-none">
           <h3 className="font-heading text-lg font-semibold text-slate-900">
@@ -168,6 +188,8 @@ export function EnergyByBuildingChart() {
           </h3>
           <p className="mb-3 text-xs text-muted-foreground">
             {copy.title} · consumo y porcentaje sobre el total ({formatMetricValue(data.total, data.unit)})
+            {data.coverage < 0.999 &&
+              ` · el detalle por espacio cubre el ${formatPercent(data.coverage * 100, 1)}`}
           </p>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -192,6 +214,21 @@ export function EnergyByBuildingChart() {
                     </td>
                   </tr>
                 ))}
+                {hasUnmetered && (
+                  <tr className="border-b border-slate-100 last:border-0 bg-slate-50/60">
+                    <td className="py-2 pr-4 font-medium text-slate-800">No desglosado</td>
+                    <td className="py-2 pr-4 text-slate-600">Cuadro general</td>
+                    <td className="py-2 pr-4 text-right tabular-nums text-slate-800">
+                      {formatMetricValue(data.unmetered_total, data.unit)}
+                    </td>
+                    <td className="py-2 text-right tabular-nums text-slate-600">
+                      {formatPercent(
+                        data.total ? (data.unmetered_total / data.total) * 100 : 0,
+                        1,
+                      )}
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>

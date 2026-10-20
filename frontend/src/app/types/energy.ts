@@ -52,6 +52,9 @@ export interface EnergyByBuildingDto {
   metric: EnergyMetric;
   unit: string;
   total: number;
+  submetered_total: number;
+  unmetered_total: number;
+  coverage: number;
   buildings: BuildingShareDto[];
   spaces: SpaceShareDto[];
 }
@@ -126,6 +129,9 @@ export interface EnergyEfficiencyDto {
   range: EnergyRange;
   unit: string;
   total: number;
+  submetered_total: number;
+  unmetered_total: number;
+  coverage: number;
   avg_kwh_per_m2: number;
   buildings: BuildingEfficiencyDto[];
   spaces: SpaceEfficiencyDto[];

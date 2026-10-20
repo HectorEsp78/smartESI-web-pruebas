@@ -10,6 +10,7 @@ import {
   YAxis,
 } from 'recharts';
 import { ChartCard } from '../../ui/ChartCard';
+import { PartialMeterNote } from '../../ui/PartialMeterNote';
 import { SelectField } from '../../ui/SelectField';
 import { StatCard } from '../../ui/StatCard';
 import { useBuildings } from '../../../hooks/useBuildings';
@@ -74,6 +75,8 @@ export function EnergyBreakdownChart() {
           tone="accent"
         />
       </div>
+
+      {building !== ALL_BUILDINGS && <PartialMeterNote />}
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <ChartCard

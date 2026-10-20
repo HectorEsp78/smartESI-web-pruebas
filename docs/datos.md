@@ -140,7 +140,8 @@ entidad → edificio/espacio se declara **explícitamente** en
 
 | Estadístico | Origen real | Estado |
 | ----------- | ----------- | ------ |
-| Electricidad por edificio | `statistics.sum` de `sensor.edificio_a` / `sensor.edificio_b` (kWh). | ✅ Real |
+| Electricidad del centro | `statistics.sum` de `sensor.cuadro_general` (kWh). Es el mismo contador del “cuadro general” de HA. | ✅ Real |
+| Electricidad por edificio | `statistics.sum` de `sensor.edificio_a` / `sensor.edificio_b` (kWh). Son **subcontadores parciales** (≈3–15 % del total), no los contadores generales de cada edificio. | ✅ Real (parcial) |
 | Gas del sitio | `statistics.sum` de `sensor.daily_gas` (m³ → kWh con `GAS_KWH_PER_M3`). Solo `building=all`. | ✅ Real |
 | Grados-día | `statistics.mean`/`states` de `sensor.temperatura_meteo` + `HEATING_BASE_TEMPERATURE_C`. | ✅ Real |
 | Temperatura interior por espacio | `statistics.mean`/`states` de `sensor.sensor_temperatura_aXX` y `sensor.temperatura_shellyN`. | ✅ Real |
@@ -150,8 +151,14 @@ entidad → edificio/espacio se declara **explícitamente** en
 | Electroválvulas | No existe entidad de válvula en la BD. | ⛔ Mock |
 | Iluminación | `light.controller1..7` y `sensor.sensor_luz_aXX` existen, pero falta confirmar el mapeo a espacios y la potencia por circuito. | ⛔ Mock |
 | CO₂ / aire | `air_quality.co2_3`, `co2_1`, `co2_2` y `co2_4` (A11, A12, A21, A22). El resto de espacios, mock. | ✅ Real (4 aulas) |
-| Eficiencia (kWh/persona·hora) | Energía real + ocupación real; el reparto por aula es por superficie. | ✅ Real (aprox.) |
+| Eficiencia (kWh/persona·hora) | Total del cuadro general + ocupación real; el desglose por edificio/espacio usa los subcontadores A/B y se reparte por superficie. | ✅ Real (total) · ⚠️ Parcial (desglose) |
 
+> El **total eléctrico** sale de `sensor.cuadro_general`, igual que en el panel de energía de HA.
+> Los contadores `sensor.edificio_a` y `sensor.edificio_b` solo cubren una parte del consumo, así que
+> `/energy/by-building` y `/energy/efficiency` devuelven también `submetered_total`,
+> `unmetered_total` y `coverage`. La UI muestra el resto como **“No desglosado”** para que las barras
+> sumen el total real sin inventar un reparto por edificio.
+>
 > El **gas** se sirve solo para el conjunto del centro porque en la instalación hay **un único
 > contador**. Al pedir un edificio concreto, el gas es `0` (la temperatura y los grados-día sí son
 > reales). La **ocupación** ya es real a nivel de edificio, pero las **válvulas** siguen siendo
@@ -167,7 +174,9 @@ entidad → edificio/espacio se declara **explícitamente** en
 En [`backend/app/db/database_data.py`](../backend/app/db/database_data.py):
 
 - **Contadores (`statistics.sum`)**: la energía de una hora es la diferencia entre dos lecturas
-  acumuladas consecutivas.
+  acumuladas consecutivas. HA guarda el `sum` al **final** del periodo: la diferencia entre las filas
+  de 10:00 y 11:00 es el consumo de 11:00–12:00 y se asigna a la hora **11:00** (la fila actual), no
+  a la anterior. Es la misma convención del panel de energía de HA.
   - Los volcados de HA tras un corte (varios días planos y luego un salto) se **reparten** entre las
     horas del hueco: son consumo real.
   - Los valores negativos (reinicio del contador) y los que superan el tope

@@ -48,6 +48,8 @@ Cada cruce se implementa en un servicio, expone un endpoint y alimenta una o var
 - **Cruza:** electricidad (kWh) ↔ superficie (m²) ↔ ocupación (personas·hora).
 - **Cálculo:** por edificio y por espacio, `kWh/m² = total / area` y
   `kWh/persona·hora = total / (personas·hora)`. La ocupación del espacio se reparte por superficie.
+  El total usa el cuadro general; el desglose por edificio/espacio usa los subcontadores A/B y la
+  respuesta indica su `coverage` (en la UI, el resto aparece como «No desglosado»).
 - **Decisión:** detectar espacios **ineficientes** (mucho kWh por m²) que merecen revisión, y
   comparar edificios con criterios homogéneos.
 - **Gráfica:** `EnergyEfficiencyChart` (pestaña *Electricidad*).

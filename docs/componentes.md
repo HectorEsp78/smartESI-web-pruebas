@@ -83,8 +83,8 @@ por edificio y estilos de ejes/tooltip).
 | `EnergyConsumptionChart` | `/energy/consumption` | Área con la evolución del consumo + métrica (kWh/€/CO₂) y edificio. |
 | `EnergyBreakdownChart` | `/energy/breakdown` | Barras apiladas **carga base vs. actividad** y **luz vs. resto**, con cuotas. |
 | `EnergyCompareChart` | `/energy/compare` | Líneas **periodo actual vs. anterior** + `delta_pct`. |
-| `EnergyEfficiencyChart` | `/energy/efficiency` | Barras horizontales de **kWh/m²** + tabla con kWh/persona·hora y coste. |
-| `EnergyByBuildingChart` | `/energy/by-building` | Barras por edificio, top de espacios y tabla con `%` sobre el total. |
+| `EnergyEfficiencyChart` | `/energy/efficiency` | Barras horizontales de **kWh/m²** + tabla con kWh/persona·hora y coste; avisa de la cobertura parcial del desglose. |
+| `EnergyByBuildingChart` | `/energy/by-building` | Barras por edificio, top de espacios y tabla con `%` sobre el total; añade «No desglosado» para cuadrar con el cuadro general. |
 
 **Controles:** edificio (`SelectField`) y métrica (`RangeSelector`); el periodo lo fija la cabecera.
 

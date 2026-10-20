@@ -34,9 +34,17 @@ export function OverviewSection() {
           tone="primary"
         />
         <StatCard
-          label="Edificio con mayor consumo"
+          label="Edificio con mayor consumo medido"
           value={topBuilding ? topBuilding.label : '—'}
-          hint={topBuilding ? `${formatPercent(topBuilding.share * 100, 1)} del total` : undefined}
+          hint={
+            topBuilding
+              ? `${formatPercent(topBuilding.share * 100, 1)} del total${
+                  energy && energy.coverage < 0.999
+                    ? ` · desglose ${formatPercent(energy.coverage * 100, 0)}`
+                    : ''
+                }`
+              : undefined
+          }
           tone="accent"
         />
         <StatCard

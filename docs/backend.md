@@ -110,7 +110,8 @@ controlador → edificio/espacio (ver más abajo).
 
 | Dato | Modo BD | Fuente |
 | ---- | ------- | ------ |
-| Energía eléctrica por edificio | **Real** | `statistics.sum` de `sensor.edificio_a` (Fermín Caballero) y `sensor.edificio_b` (Módulo B). |
+| Energía eléctrica del centro | **Real** | `statistics.sum` de `sensor.cuadro_general` (el “cuadro general” de HA). |
+| Energía eléctrica por edificio | **Real (parcial)** | `statistics.sum` de `sensor.edificio_a` (Fermín Caballero) y `sensor.edificio_b` (Módulo B). Son subcontadores parciales (≈3–15 % del total); el resto se expone como `unmetered_total`. |
 | Gas (sitio completo) | **Real** | `statistics.sum` de `sensor.daily_gas` (m³ → kWh con `GAS_KWH_PER_M3`). Solo se sirve para `building=all`; en un edificio concreto el gas es `0` (hay un único contador). |
 | Temperatura exterior (grados-día) | **Real** | `statistics.mean` o, si no hay, `states` de `sensor.temperatura_meteo`. |
 | Temperatura interior por espacio | **Real** | `statistics.mean`/`states` de `sensor.sensor_temperatura_aXX` y `sensor.temperatura_shellyN`. |
@@ -121,7 +122,7 @@ controlador → edificio/espacio (ver más abajo).
 | Electroválvulas | Mock | No existe entidad de válvula en la BD. |
 | Iluminación | Mock | `light.controller1..7` / `sensor.sensor_luz_aXX` existen, pero no hay un mapeo confirmado a cada espacio ni una medida de potencia por circuito. |
 | CO₂ de espacios sin sonda | Mock | Solo A11/A12/A21/A22 tienen sonda; el resto usa el modelo (se documenta así en la respuesta). |
-| Eficiencia (kWh/persona·hora) | **Real** (ocupación) | La energía es real y la ocupación sale de los contadores; el reparto por espacio es por superficie. |
+| Eficiencia (kWh/persona·hora) | **Real (total) / parcial (desglose)** | El total eléctrico sale del cuadro general y la ocupación de los contadores; el reparto por edificio/espacio usa los subcontadores A/B y se distribuye por superficie. |
 
 ### Cómo se leen los datos
 
@@ -135,9 +136,10 @@ controlador → edificio/espacio (ver más abajo).
   5. último `state`/`attributes` de cada hora, para los contadores de personas (que no se pueden
      promediar porque cambian en cada cruce de puerta).
 - `db/database_data.py` convierte esas filas en series `{hora local: valor}`:
-  - **energía**: la diferencia entre dos `sum` consecutivos, repartida entre las horas del hueco
-    (los volcados de HA tras un corte son reales); los valores negativos (reinicio del contador) y
-    los que superan `ENERGY_MAX_KWH_PER_HOUR` se descartan;
+  - **energía**: la diferencia entre dos `sum` consecutivos, asignada a la hora de la fila actual
+    (HA guarda el `sum` al final del periodo); si hay un hueco, se reparte entre las horas que cierran
+    el intervalo (los volcados de HA tras un corte son reales); los valores negativos (reinicio del
+    contador) y los que superan `ENERGY_MAX_KWH_PER_HOUR` se descartan;
   - **gas**: la diferencia se descarta si supera `GAS_MAX_M3_PER_HOUR` (el `sum` del gas tiene saltos
     corruptos en algunos periodos) y se convierte a kWh;
   - **temperaturas/humedad**: media horaria y *fill-forward* del último valor conocido; se prefiere

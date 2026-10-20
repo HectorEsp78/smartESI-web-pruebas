@@ -65,6 +65,14 @@ export function EnergyEfficiencyChart() {
         />
       </div>
 
+      {data && data.coverage < 0.999 && (
+        <p className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-900">
+          El consumo total procede del cuadro general. El detalle por edificio y espacio usa los
+          subcontadores A/B, que cubren el {formatPercent(data.coverage * 100, 1)} del total; las
+          intensidades por superficie son, por tanto, parciales.
+        </p>
+      )}
+
       <ChartCard
         title="Consumo por superficie (kWh/m²)"
         subtitle={`${copy.title} · espacios con mayor consumo por metro cuadrado`}
