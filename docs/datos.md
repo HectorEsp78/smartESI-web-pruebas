@@ -49,6 +49,9 @@ La cobertura cambia con el periodo. En la prueba de 7 días fue del **38,0 %**; 
 
 La fecha mínima con datos reales es **2023-12-22**.
 
+Las consultas SQL exactas contra `statistics_meta`, `statistics` y `states` están en
+[Consultas SQL](sql.md).
+
 ## Electricidad sintética
 
 El modelo de `services/mock_data.py` genera kWh por hora a partir de:

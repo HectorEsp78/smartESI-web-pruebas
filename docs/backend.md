@@ -131,6 +131,9 @@ Solo se consultan tres formas:
 2. `states` con el último valor por hora para los contadores de personas.
 3. El valor inmediatamente anterior a la ventana para rellenar el primer intervalo.
 
+Las sentencias SQL completas, sus parámetros y los ejemplos de consulta manual están en
+[Consultas SQL](sql.md).
+
 La conversión de acumulado a consumo horario está en `db/database_data.py`:
 
 - El incremento se atribuye a la hora en la que cierra el intervalo.

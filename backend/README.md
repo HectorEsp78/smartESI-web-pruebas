@@ -29,5 +29,6 @@ cp .env.example .env
 ## Documentación
 
 - [Backend](../docs/backend.md)
+- [Consultas SQL](../docs/sql.md)
 - [Arquitectura](../docs/arquitectura.md)
 - [Datos](../docs/datos.md)

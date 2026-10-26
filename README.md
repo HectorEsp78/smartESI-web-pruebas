@@ -98,6 +98,7 @@ docs/             Documentación
 - [Puesta en marcha](docs/puesta-en-marcha.md)
 - [Arquitectura](docs/arquitectura.md)
 - [Backend](docs/backend.md)
+- [Consultas SQL](docs/sql.md)
 - [Frontend](docs/frontend.md)
 - [Datos](docs/datos.md)
 - [Estadísticos](docs/estadisticos.md)
