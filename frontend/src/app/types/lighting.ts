@@ -1,4 +1,6 @@
-export type LightingRange = 'day' | 'week' | 'month' | 'year';
+import type { DashboardRange } from './range';
+
+export type LightingRange = DashboardRange;
 
 export interface LightingPointDto {
   timestamp: string;

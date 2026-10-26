@@ -2,139 +2,119 @@
 
 ## Visión general
 
-```mermaid
-flowchart LR
-    U[Navegador] -->|"http://localhost:5174"| FE[Frontend React + Vite]
-    FE -->|"fetch /api/v1/... (proxy Vite)"| BE[Backend FastAPI 127.0.0.1:8010]
-    BE -->|DATA_SOURCE=mock| GEN[Generador de datos sintéticos]
-    BE -.->|"DATA_SOURCE=database (Electricidad, Clima/gas, Ocupación y CO₂)"| DB[(MariaDB · Home Assistant recorder)]
+```text
+navegador
+  │
+  ├── React + Vite (frontend)
+  │      └── /api/*  (proxy de desarrollo o nginx)
+  │
+  └── FastAPI (backend)
+         ├── Electricidad ── SELECT ──► MariaDB del recorder de Home Assistant
+         ├── Iluminación ─── modelo sintético + ocupación real si existe
+         └── Metadatos de edificios
 ```
 
-1. El **frontend** (SPA React compilada con Vite) consume la API mediante `fetch` y gestiona caché,
-   reintentos y refresco con **TanStack Query**.
-2. En desarrollo, el **proxy de Vite** redirige `/api/*` al backend en `127.0.0.1:8010`.
-3. El **backend FastAPI** calcula las agregaciones. Con `DATA_SOURCE=mock` genera datos sintéticos;
-   con `DATA_SOURCE=database` lee de la base de datos real de Home Assistant (solo lectura) la
-   energía, el gas, las temperaturas, la humedad, la ocupación y el CO₂. Ver
-   [`backend.md`](backend.md) y [`datos.md`](datos.md).
-4. Cada respuesta es JSON bajo `/api/v1` y está descrita con **Pydantic** (contrato de la API).
+- El backend **nunca escribe** en la base de datos: solo ejecuta `SELECT`.
+- El frontend no conoce credenciales ni SQL; solo consume JSON.
+- La caché en memoria evita repetir agregaciones costosas durante 30 segundos.
 
-El origen de los datos sintéticos y el plan de migración están en [`datos.md`](datos.md). El catálogo
-de estadísticos, en [`estadisticos.md`](estadisticos.md).
+## Pestañas
 
-## Módulos funcionales (pestañas)
+| Pestaña | Qué resuelve | Datos |
+| ------- | ------------ | ----- |
+| **Electricidad** | Consumo/coste por edificio y sector, base de centro cerrado y comparativa de periodos. | Reales si `DATA_SOURCE=database`; sintéticos en `mock`. |
+| **Iluminación** | Reparto luminarias/otras cargas, ranking por espacio y luz encendida sin ocupación. | Consumo sintético; ocupación real si hay contadores. |
 
-El panel se organiza en **seis pestañas**. Cada una agrupa varias gráficas de un dominio:
+La cabecera mantiene un selector de periodo global **solo en Iluminación**. Electricidad usa fechas propias porque su comparativa necesita dos periodos independientes.
 
-| Pestaña | Qué muestra | Endpoints | Componentes |
-| ------- | ----------- | --------- | ----------- |
-| Resumen | KPIs de cabecera | (reutiliza los demás) | `OverviewSection` |
-| Electricidad | Fechas propias, KPIs, reparto por edificio, sectores de Fermín y comparativa de dos periodos | `/energy/electricity`, `/energy/electricity/compare`, `/energy/electricity/meta` | `ElectricityDashboard`, `ElectricityFilters`, `ElectricitySummary`, `ElectricityBuildingsChart`, `ElectricitySectorsChart`, `ElectricityComparisonChart` |
-| Iluminación | Luminarias frente a luz natural y despilfarro | `/lighting/consumption`, `/lighting/by-space`, `/lighting/waste` | `LightingConsumptionChart`, `LightingBySpaceChart`, `LightingWasteChart` |
-| Climatización y gas | Gas/grados-día, electroválvulas y aulas vacías | `/climate/gas`, `/climate/valves`, `/climate/empty-spaces` | `GasConsumptionChart`, `ValvesTemperatureChart`, `EmptySpacesHeatingChart` |
-| Ocupación y aire | Cruce ocupación ↔ CO₂ | `/correlation/occupancy-air-quality` | `OccupancyAirQualityChart` |
-| Decisiones | Ranking de oportunidades de ahorro | `/decisions/opportunities` | `DecisionsPanel` |
-
-## Estructura del repositorio
+## Capas del backend
 
 ```text
-smartesi-stats/
-├── backend/                    API FastAPI (Python)
-│   ├── app/
-│   │   ├── main.py             App, CORS, TrustedHost, health checks y handlers de error
-│   │   ├── api/                Routers: energy, electricity, lighting, climate, decisions, correlation, meta
-│   │   ├── core/
-│   │   │   ├── config.py       Ajustes (.env) — DATA_SOURCE y factores de conversión
-│   │   │   ├── clock.py        Utilidades de tiempo (UTC vs. hora local Europe/Madrid)
-│   │   │   ├── cache.py        Caché TTL en memoria para las series agregadas
-│   │   │   ├── energy_map.py   Catálogo general de edificios y espacios (+ área y luminarias)
-│   │   │   └── electricity_map.py  Mapa de los 3 edificios y los cuadros/CPD de Electricidad
-│   │   ├── db/                 Acceso a la BD real (solo DATA_SOURCE=database)
-│   │   │   ├── session.py          Sesión SQLAlchemy async + TLS + time zone UTC
-│   │   │   ├── entity_map.py       Entidad de HA ↔ edificio/espacio
-│   │   │   ├── repository.py       Consultas SELECT (agregación horaria)
-│   │   │   └── database_data.py    Filas → series horarias en hora local
-│   │   ├── models/ha.py        Modelos de states / statistics / statistics_meta
-│   │   ├── schemas/            Modelos Pydantic de respuesta
-│   │   └── services/
-│   │       ├── mock_data.py        Generador determinista de datos sintéticos
-│   │       ├── stats.py            Estadística descriptiva y regresión
-│   │       ├── energy_service.py   Consumo, desglose, comparativa y eficiencia (endpoints legacy)
-│   │       ├── electricity_service.py  Fechas absolutas, edificios, sectores, base y comparativa
-│   │       ├── lighting_service.py Iluminación (luminarias y despilfarro)
-│   │       ├── climate_service.py  Gas, grados-día, válvulas y aulas vacías
-│   │       ├── decisions_service.py Ranking de oportunidades de ahorro
-│   │       └── correlation_service.py  Cruce ocupación–aire
-│   └── tests/                  Tests unittest (API con TestClient)
-├── frontend/                   SPA React + Vite
-│   └── src/
-│       ├── app/
-│       │   ├── api/            fetch tipado + baseUrl (VITE_API_BASE_URL opcional)
-│       │   ├── context/        RangeContext: periodo global de las pestañas no migradas
-│       │   ├── hooks/          useElectricity*, useBuildings, useEnergy*, useLighting,
-│       │   │                   useClimate, useDecisions, useOccupancyAirQuality
-│       │   ├── components/     Header, ui/ y stats/ (con subcarpetas por dominio)
-│       │   ├── pages/          Stats.tsx (pestañas), NotFound.tsx
-│       │   ├── lib/            format, chartTheme, sections, electricity
-│       │   └── types/          DTOs de la API en snake_case
-│       ├── assets/             Logos y banner (reutilizados del proyecto original)
-│       └── styles/             theme.css, tailwind.css, index.css
-├── docs/                       Esta documentación
-└── README.md
+app/
+├── api/          Rutas HTTP y validación de parámetros
+├── services/     Agregación, comparativas, cobertura y modelo sintético
+├── core/         Configuración, catálogo de edificios y mapa eléctrico
+├── db/           Consultas SELECT y carga de series horarias
+├── models/       Tablas del recorder de Home Assistant
+└── schemas/      Contratos Pydantic de respuesta
 ```
 
-## Contrato de la API
+- `api/electricity.py` expone `/api/v1/energy/electricity`.
+- `api/lighting.py` expone `/api/v1/lighting`.
+- `api/meta.py` expone los edificios para los selectores.
+- `services/electricity_service.py` calcula series, totales, base y comparativa.
+- `services/lighting_service.py` calcula luminarias, ranking y despilfarro.
+- `core/electricity_map.py` declara los contadores eléctricos reales.
+- `core/buildings.py` es el catálogo compartido por el modelo sintético y las gráficas.
+- `db/repository.py` contiene las únicas consultas SQL.
+- `db/database_data.py` convierte filas acumuladas en series horarias.
 
-Prefijo común: `/api/v1`.
+## Endpoints
 
-| Método | Ruta | Parámetros | Devuelve |
-| ------ | ---- | ---------- | -------- |
-| GET | `/meta/buildings` | — | Edificios (id, label, aforo, área, luminarias, consigna) y espacios (id, label, edificio, tipo, área, luminarias, válvula). |
-| GET | `/energy/electricity/meta` | — | Edificios, sectores, inicio de datos, precio y origen (`mock`/`database`). |
-| GET | `/energy/electricity` | `start`, `end`, `granularity=day\|week\|month\|year`, `metric=kwh\|cost`, `building=all\|<id>`, `sector` | Serie, KPIs, tres edificios, sectores de Fermín, cobertura y base de centro cerrado. |
-| GET | `/energy/electricity/compare` | `start_a`, `end_a`, `start_b`, `end_b`, granularidad, métrica y ámbito | Dos series alineadas, KPIs por periodo, `delta_pct` y base común. |
-| GET | `/energy/consumption` | `range`, `building=all\|<id>`, `metric=kwh\|cost\|co2` | `series` (timestamp, value), `total`, `average`, `peak`, `unit`, `granularity`. |
-| GET | `/energy/by-building` | `range`, `metric` | `total` del cuadro general, `submetered_total`, `unmetered_total`, `coverage`, y `share` por edificio + espacio. |
-| GET | `/energy/breakdown` | `range`, `building` | `series` (base, activity, lighting, other), totales y cuotas de carga base e iluminación. |
-| GET | `/energy/compare` | `range`, `building`, `metric` | `series` (current, previous), `current_total`, `previous_total`, `delta_pct`. |
-| GET | `/energy/efficiency` | `range` | kWh/m² y kWh/persona·hora por edificio y por espacio; `coverage` del desglose respecto al total. |
-| GET | `/lighting/consumption` | `range`, `building` | `series` (lighting, other, total, occupancy_pct, daylight_hours) y KPIs de luminarias. |
-| GET | `/lighting/by-space` | `range`, `building` | Ranking de espacios por consumo de luminarias y sus cuotas. |
-| GET | `/lighting/waste` | `range`, `building` | Luz sin ocupación, cuota, coste y `€/año` por espacio. |
-| GET | `/climate/gas` | `range`, `building` | `series` (gas, degree_days, temperaturas, % válvulas) y `stats` (correlación, kWh/grado-día…). |
-| GET | `/climate/valves` | `range`, `building` | `series` (% válvulas, temperatura, consigna) y estado por aula. |
-| GET | `/climate/empty-spaces` | `range`, `building` | Gas sin ocupación y horas calentadas por espacio + €/año. |
-| GET | `/decisions/opportunities` | `range`, `building` | Oportunidades priorizadas con `savings_eur_year` y total. |
-| GET | `/correlation/occupancy-air-quality` | `range`, `building` | `points` y `stats` (Pearson, medias y reparto good/moderate/poor). |
-| GET | `/health/live` | — | Estado y `data_source` actual. |
-| GET | `/health/ready` | — | Estado de las dependencias. |
+| Método | Ruta | Uso |
+| ------ | ---- | --- |
+| GET | `/api/v1/energy/electricity/meta` | Edificios, sectores, fecha mínima, precio y origen (`mock`/`database`). |
+| GET | `/api/v1/energy/electricity` | Serie y resumen de Electricidad. |
+| GET | `/api/v1/energy/electricity/compare` | Dos periodos con el mismo número de intervalos. |
+| GET | `/api/v1/lighting/consumption` | Serie de luminarias y otras cargas. |
+| GET | `/api/v1/lighting/by-space` | Ranking de espacios por consumo de luminarias. |
+| GET | `/api/v1/lighting/waste` | Luz encendida sin ocupación y coste anualizado. |
+| GET | `/api/v1/meta/buildings` | Lista de edificios para los selectores. |
+| GET | `/health/live` | Estado y origen de datos. |
+| GET | `/health/ready` | Comprueba la conexión a la base de datos en modo `database`. |
 
-> Los endpoints `/energy/consumption`, `/energy/by-building`, `/energy/breakdown`,
-> `/energy/compare` y `/energy/efficiency` siguen disponibles para las pestañas aún no migradas.
-> La pestaña de Electricidad usa exclusivamente los tres endpoints `/energy/electricity...`.
+### Electricidad
 
-Rangos admitidos y su granularidad:
+Parámetros principales:
 
-| `range` | Periodo | Series temporales | Dispersión (correlación) |
-| ------- | ------- | ----------------- | ------------------------ |
-| `day` | últimas 24 h | 24 puntos (hora) | 24 puntos |
-| `week` | últimos 7 días | 7 puntos (día) | cada 3 h |
-| `month` | últimos 30 días | 30 puntos (día) | cada 12 h |
-| `year` | últimos 12 meses | 12 puntos (mes) | cada 24 h |
+- `start`, `end`: fechas `YYYY-MM-DD`, ambas inclusive.
+- `granularity`: `day`, `week`, `month` o `year`. La UI lo deduce del rango.
+- `metric`: `kwh` o `cost`.
+- `building`: `all`, `ModuloA`, `ModuloB` o `FerminCaballero`.
+- `sector`: id de cuadro o `CPD`, opcional.
 
-## Decisiones de diseño
+La comparativa usa `start_a`, `end_a`, `start_b`, `end_b` y los mismos filtros. Rechaza periodos con distinto número de intervalos.
 
-- **Pestaña de Electricidad con fechas propias**: no usa el periodo global de la cabecera. El
-  resto de pestañas mantiene `RangeContext` hasta que se migren.
-- **Datos deterministas**: el generador siembra su aleatoriedad con un hash de (edificio/espacio +
-  hora), de modo que una misma consulta devuelve siempre el mismo valor (estable y testeable).
-- **Periodo global en el frontend**: el rango vive en un contexto (`RangeContext`) y lo comparten la
-  cabecera y las pestañas aún no migradas; edificio y métrica se eligen por gráfica. Electricidad
-  usa un rango absoluto `start`–`end` propio.
-- **Caché TTL en backend** (`STATS_CACHE_TTL_SECONDS`, 30 s por defecto) sobre las series agregadas.
-- **`placeholderData` en el frontend**: al cambiar de rango se siguen mostrando los datos
-  anteriores mientras llegan los nuevos (sin parpadeo).
-- **Errores saneados**: el backend nunca devuelve trazas; los errores no controlados se convierten
-  en `500 {"detail": "Internal server error"}`.
-- **Sin acoplar al despliegue**: las URLs de la API son relativas por defecto; el proxy de Vite se
-  encarga en desarrollo. Opcionalmente se puede apuntar a otro host con `VITE_API_BASE_URL`.
+### Iluminación
+
+Parámetros: `range` (`day`, `week`, `month`, `year`) y `building`.
+
+## Frontend
+
+```text
+src/app/
+├── api/          Cliente HTTP
+├── components/
+│   ├── Header.tsx
+│   ├── stats/electricity/
+│   ├── stats/lighting/
+│   └── ui/       Tarjetas, gráficas, selectores y exportación CSV
+├── context/      Periodo global de Iluminación
+├── hooks/        Consultas con TanStack Query
+├── lib/          Fechas, formato, paletas, CSV y URL
+├── pages/        Stats y NotFound
+└── types/        Contratos TypeScript
+```
+
+- `pages/Stats.tsx` decide qué pestaña renderizar.
+- `lib/sections.ts` contiene las dos pestañas y la pestaña por defecto.
+- `lib/urlState.ts` sincroniza pestaña y periodo con la URL.
+- Las paletas de Electricidad son propias y no alteran las de Iluminación.
+
+## Flujo de una consulta de Electricidad
+
+1. El usuario elige fechas, edificio, sector y métrica.
+2. El hook calcula la granularidad automática según el número de días.
+3. El backend valida fechas y ámbito.
+4. `database_data.load_hourly_statistics` lee los `sum` acumulados y los convierte a kWh por hora.
+5. `electricity_service` agrupa por intervalos, calcula la base de centro cerrado, la cobertura de Fermín y la comparativa.
+6. El frontend pinta resumen, barras, sectores y comparativa.
+
+## Criterios de diseño
+
+- **Fermín Caballero** se deriva de `Cuadro General − Módulo A − Módulo B`; no existe un contador único del edificio.
+- Los sectores de Fermín son **parciales**; la UI muestra siempre cobertura y “No desglosado”.
+- La base de centro cerrado usa **L-V 7:00–21:00** como horario laborable; noches y fines de semana cuentan como cierre.
+- El coste se calcula con **0,20 €/kWh**.
+- La agrupación temporal es automática para no añadir un selector confuso.
+- La fecha mínima solo se exige en modo `database`, porque en `mock` los datos son sintéticos.

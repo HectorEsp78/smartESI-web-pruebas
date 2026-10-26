@@ -1,9 +1,7 @@
-"""Response models for the new Electricity tab.
+"""Response models for the Electricity tab.
 
 The tab has its own contract because it works with explicit date ranges and a
-different building/sector catalogue than the rest of the prototype. Keeping it
-separate avoids breaking the existing range-based endpoints while the rest of
-the dashboard is migrated tab by tab.
+building/sector catalogue.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""HTTP routes for the new Electricity tab."""
+"""HTTP routes for the Electricity tab."""
 
 from __future__ import annotations
 

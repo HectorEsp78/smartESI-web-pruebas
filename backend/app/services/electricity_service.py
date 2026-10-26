@@ -1,8 +1,7 @@
-"""Business logic for the new Electricity tab.
+"""Business logic for the Electricity tab.
 
 The tab works with explicit dates (``start``/``end`` inclusive) and a
-building/sector scope. Unlike the older range-based endpoints, it does not use
-"last 24 hours" windows: the user chooses the exact period and the bucket size.
+building/sector scope. The user chooses the exact period and the bucket size.
 
 Data sources:
 
@@ -38,7 +37,7 @@ from app.core.electricity_map import (
     ELECTRICITY_SECTORS_BY_ID,
     SITE_ELECTRICITY_STATISTIC,
 )
-from app.core.energy_map import BUILDINGS_BY_ID
+from app.core.buildings import BUILDINGS_BY_ID
 from app.schemas.electricity import (
     ElectricityBuildingStats,
     ElectricityComparePoint,
@@ -291,7 +290,7 @@ def _iter_local_hours(start: datetime, end: datetime):
 
 
 def _mock_data(start: datetime, end: datetime) -> _ElectricityData:
-    """Deterministic synthetic series for the new Electricity tab."""
+    """Deterministic synthetic series for the Electricity tab."""
     raw: dict[str, dict[datetime, float]] = {
         "site": {},
         "ModuloA": {},

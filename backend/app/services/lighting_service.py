@@ -16,9 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import timedelta
 
+from app.core.buildings import BUILDINGS_BY_ID, SPACES_BY_BUILDING, SPACES_BY_ID
 from app.core.cache import TTLCache
 from app.core.config import settings
-from app.core.energy_map import SPACES_BY_BUILDING, SPACES_BY_ID
 from app.schemas.lighting import (
     LightingBySpaceResponse,
     LightingConsumptionResponse,
@@ -29,7 +29,7 @@ from app.schemas.lighting import (
     LightingWasteSpace,
 )
 from app.services import mock_data
-from app.services.energy_service import (
+from app.services.lighting_context import (
     ALL_BUILDINGS,
     build_buckets,
     load_occupancy_provider,
@@ -258,8 +258,6 @@ async def build_waste(
 
 
 def _building_label(building_id: str) -> str:
-    from app.core.energy_map import BUILDINGS_BY_ID
-
     building = BUILDINGS_BY_ID.get(building_id)
     return building.label if building else building_id
 

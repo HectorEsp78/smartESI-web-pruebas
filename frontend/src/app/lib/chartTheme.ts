@@ -1,5 +1,4 @@
 import type { CSSProperties } from 'react';
-import type { EnergyMetric } from '../types/energy';
 
 // Institutional palette (see styles/theme.css).
 export const CHART_PRIMARY = '#0497d7';
@@ -12,8 +11,8 @@ const BUILDING_COLORS: Record<string, string> = {
   ModuloB: '#1f6f9a',
 };
 
-// Electricity uses its own building order/colours so the shared building
-// palette (and therefore the other tabs) stays unchanged.
+// Electricity uses its own building order and colours so the Lighting charts
+// keep their existing palette.
 export const ELECTRICITY_BUILDING_COLORS: Record<string, string> = {
   ModuloA: '#cf6c2e',
   ModuloB: '#1f6f9a',
@@ -39,12 +38,6 @@ export const UNMETERED_COLOR = '#94a3b8';
 export function buildingColor(id: string, index = 0): string {
   return BUILDING_COLORS[id] ?? SERIES_COLORS[index % SERIES_COLORS.length];
 }
-
-export const METRIC_COLOR: Record<EnergyMetric, string> = {
-  kwh: '#0497d7',
-  cost: '#cf6c2e',
-  co2: '#2b8b57',
-};
 
 export const AXIS_TICK = { fill: '#64748b', fontSize: 12 } as const;
 export const AXIS_LINE = { stroke: '#cbd5e1' } as const;

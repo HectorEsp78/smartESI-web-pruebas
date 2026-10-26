@@ -1,1 +1,1 @@
-"""HTTP routers (energy, correlation, meta)."""
+"""HTTP routers for the Electricity and Lighting tabs."""

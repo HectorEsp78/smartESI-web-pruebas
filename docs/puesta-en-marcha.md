@@ -4,9 +4,9 @@
 
 - **Python 3.10+** (probado con 3.14).
 - **Node.js 18+** y npm (probado con Node 22).
-- No se necesita VPN ni base de datos con el modo por defecto (`DATA_SOURCE=mock`): el backend genera
-  datos sintéticos. Para leer la base de datos real del *recorder* de Home Assistant hace falta
-  acceso a esa BD (ver más abajo).
+- No se necesita VPN ni base de datos con `DATA_SOURCE=mock`: el backend genera datos sintéticos.
+  Para leer la base de datos real del *recorder* de Home Assistant hace falta acceso a esa BD
+  (ver más abajo). El modo se elige en `backend/.env`.
 
 ## 1. Backend (FastAPI)
 
@@ -57,7 +57,7 @@ Con `DATA_SOURCE=database` el backend lee la BD del *recorder* de Home Assistant
 3. Arrancar el backend como siempre. `GET /health/live` responde `"data_source":"database"`.
 
 Detalle de qué datos son reales y cuáles siguen siendo sintéticos en
-[`docs/backend.md`](backend.md) y [`docs/datos.md`](datos.md).
+[Backend](backend.md) y [Datos](datos.md).
 
 ## 2. Frontend (React + Vite)
 

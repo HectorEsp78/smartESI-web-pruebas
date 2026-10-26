@@ -1,7 +1,7 @@
 [project]
 name = "smartesi-stats-backend"
 version = "0.1.0"
-description = "Backend for the Smart ESI statistics module (new charts prototype)"
+description = "Backend for the Smart ESI statistics module"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

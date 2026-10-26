@@ -1,4 +1,4 @@
-/** Types for the new Electricity tab (explicit dates + building/sector scope). */
+/** Types for the Electricity tab (explicit dates + building/sector scope). */
 
 export type ElectricityMetric = 'kwh' | 'cost';
 export type ElectricityGranularity = 'day' | 'week' | 'month' | 'year';

@@ -1,8 +1,8 @@
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
-import type { EnergyRange } from '../types/energy';
+import type { DashboardRange } from '../types/range';
 
-export const RANGE_LABEL: Record<EnergyRange, string> = {
+export const RANGE_LABEL: Record<DashboardRange, string> = {
   day: 'Día',
   week: 'Semana',
   month: 'Mes',
@@ -16,7 +16,7 @@ interface RangeFormatting {
   tooltipPattern: string;
 }
 
-export const RANGE_FORMATTING: Record<EnergyRange, RangeFormatting> = {
+export const RANGE_FORMATTING: Record<DashboardRange, RangeFormatting> = {
   day: {
     title: 'Últimas 24 horas',
     subtitle: 'Agregación por hora',
@@ -58,11 +58,6 @@ function numberFormatter(digits: number): Intl.NumberFormat {
 
 export function formatNumber(value: number, digits = 0): string {
   return numberFormatter(digits).format(value);
-}
-
-export function formatMetricValue(value: number, unit: string): string {
-  const digits = Math.abs(value) >= 100 ? 0 : 1;
-  return `${formatNumber(value, digits)} ${unit}`;
 }
 
 export function formatPercent(value: number, digits = 0): string {

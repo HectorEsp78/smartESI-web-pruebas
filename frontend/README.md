@@ -1,7 +1,6 @@
 # Frontend · Smart ESI Stats
 
-SPA React + Vite + TypeScript con las nuevas gráficas de estadísticas. Consume la API del backend
-(por defecto vía el proxy de Vite en `/api` → `http://127.0.0.1:8010`).
+SPA React + Vite + TypeScript con las pestañas **Electricidad** e **Iluminación**.
 
 ## Arranque
 
@@ -10,15 +9,19 @@ npm install
 npm run dev        # http://localhost:5174
 ```
 
-Otros comandos:
+El proxy de Vite envía `/api` a `http://127.0.0.1:8010`.
+
+## Comandos
 
 ```bash
 npm run typecheck
 npm run test:run
 npm run build
+npm run preview
 ```
 
 ## Documentación
 
-Consulta [`../docs/frontend.md`](../docs/frontend.md) (estructura, estilos y cómo añadir gráficas)
-y [`../docs/graficas.md`](../docs/graficas.md).
+- [Frontend](../docs/frontend.md)
+- [Gráficas](../docs/graficas.md)
+- [Componentes](../docs/componentes.md)

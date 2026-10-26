@@ -1,7 +1,6 @@
 """Electricity-specific catalogue: buildings, sectors and their HA statistics.
 
-This map is intentionally separate from :mod:`app.core.energy_map`. The
-Electricity tab has a different scope than the rest of the prototype:
+The Electricity tab has its own scope and catalogue:
 
 - It works with **three buildings**: Módulo A, Módulo B and Fermín Caballero.
 - Fermín Caballero has **partial** submetering by floor panel and the CPD.

@@ -1,10 +1,11 @@
 """Loads real Home Assistant data as hourly series keyed by *local* hour.
 
-The services aggregate by local buckets (hour/day/month, Europe/Madrid). To keep
-that code unchanged, this module fetches the raw rows once per window and turns
-them into ``{local_hour: value}`` dictionaries the services can look up directly.
+The services aggregate by local buckets (hour/day/month, Europe/Madrid). This
+module fetches the raw rows once per window and turns them into
+``{local_hour: value}`` dictionaries the services can look up directly.
 
-Nothing here writes to the database: it only reads through ``app.db.repository``.
+Nothing here writes to the database: it only reads through
+:mod:`app.db.repository`.
 """
 
 from __future__ import annotations
@@ -14,22 +15,11 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.buildings import BUILDINGS_BY_ID
 from app.core.clock import local_tz
 from app.core.config import settings
-from app.core.energy_map import BUILDINGS_BY_ID
 from app.db import repository
-from app.db.entity_map import (
-    BUILDING_ENERGY_STATISTIC,
-    BUILDING_OCCUPANCY_COUNTERS,
-    OUTDOOR_TEMPERATURE_ENTITY,
-    SITE_ENERGY_KEY,
-    SITE_ENERGY_STATISTIC,
-    SITE_GAS_STATISTIC,
-    SPACE_CO2_ENTITY,
-    SPACE_HUMIDITY_ENTITY,
-    SPACE_TEMPERATURE_ENTITY,
-    OccupancyCounter,
-)
+from app.db.entity_map import BUILDING_OCCUPANCY_COUNTERS, OccupancyCounter
 
 _HOUR_SECONDS = 3600
 # How far back to look for the last known value before a window (fill-forward seed).
@@ -92,21 +82,6 @@ def net_occupancy(entrance: float | None, exit_: float | None, capacity: int) ->
     return max(0, min(int(round(entrance - exit_)), max(capacity, 0)))
 
 
-def average_series(series: list[dict[datetime, float]]) -> dict[datetime, float]:
-    """Hour-by-hour mean of several ``{local_hour: value}`` series.
-
-    Used to turn per-space temperatures/humidity into one series per building.
-    Only hours present in at least one series are returned.
-    """
-    totals: dict[datetime, float] = {}
-    counts: dict[datetime, int] = {}
-    for item in series:
-        for hour, value in item.items():
-            totals[hour] = totals.get(hour, 0.0) + value
-            counts[hour] = counts.get(hour, 0) + 1
-    return {hour: totals[hour] / counts[hour] for hour in totals}
-
-
 def cumulative_to_hourly(
     rows: list[tuple[datetime, float]],
     max_delta: float | None = None,
@@ -124,14 +99,7 @@ def cumulative_to_hourly(
     (the *current* row), not to the previous one. This is the same convention
     used by the Home Assistant energy dashboard.
 
-    - With ``spread=True`` (electricity) the difference is spread evenly over the
-      elapsed hours, because it is a real catch-up of consumption.
-    - With ``spread=False`` (gas) the whole difference is kept in the current
-      hour and then dropped by the ``max_delta`` guard if it is implausible; the
-      gas meter has long periods with corrupted ``sum``/``state`` jumps that must
-      not be counted at all.
-
-    Always: negative differences (a meter reset) produce 0, and a value above
+    Negative differences (a meter reset) produce 0, and a value above
     ``max_delta`` is ignored so a bad row cannot inflate a whole chart.
     """
     hourly: dict[datetime, float] = {}
@@ -167,77 +135,6 @@ def cumulative_to_hourly(
         previous_sum = total
 
     return hourly
-
-
-async def _load_state_series(
-    session: AsyncSession,
-    entity_ids: list[str],
-    start_local: datetime,
-    end_local: datetime,
-) -> dict[str, dict[datetime, float]]:
-    """Hourly averaged states per entity, fill-forward, keyed by local hour.
-
-    Temperature/humidity sensors are read from HA's ``statistics`` table first:
-    it already stores the hourly mean and avoids scanning a year of raw
-    ``states`` rows. Any entity without long-term statistics (CO2, air quality,
-    devices that only record state changes) falls back to ``states``.
-    """
-    if not entity_ids:
-        return {}
-
-    start_utc = _to_utc_naive(start_local)
-    end_utc = _to_utc_naive(end_local)
-    start_epoch = _floor_epoch(start_utc)
-    end_epoch = _floor_epoch(end_utc)
-
-    averages: dict[str, dict[int, float]] = {}
-    baselines: dict[str, float] = {}
-
-    if settings.USE_STATISTICS_FOR_STATES:
-        stat_rows = await repository.fetch_statistics_means(
-            session, entity_ids, start_utc, end_utc
-        )
-        for entity_id, start, value in stat_rows:
-            averages.setdefault(entity_id, {})[_floor_epoch(start)] = value
-        baselines.update(
-            await repository.fetch_last_statistics_means_before(
-                session, entity_ids, start_utc, _BASELINE_LOOKBACK
-            )
-        )
-
-    # Entities with neither statistics rows nor a statistics baseline are read
-    # from the raw states table (the old, slower path).
-    missing = [
-        entity_id
-        for entity_id in entity_ids
-        if entity_id not in averages and entity_id not in baselines
-    ]
-    if missing:
-        rows = await repository.fetch_hourly_state_values(
-            session, missing, start_utc, end_utc
-        )
-        for entity_id, epoch, value in rows:
-            averages.setdefault(entity_id, {})[epoch] = value
-        baselines.update(
-            await repository.fetch_last_state_values_before(
-                session, missing, start_utc, _BASELINE_LOOKBACK
-            )
-        )
-
-    series: dict[str, dict[datetime, float]] = {}
-    for entity_id in {*averages.keys(), *baselines.keys()}:
-        measured = averages.get(entity_id, {})
-        last_value = baselines.get(entity_id)
-        filled: dict[datetime, float] = {}
-        for epoch in range(start_epoch, end_epoch, _HOUR_SECONDS):
-            if epoch in measured:
-                last_value = measured[epoch]
-            if last_value is not None:
-                filled[_local_hour_from_epoch(epoch)] = last_value
-        if filled:
-            series[entity_id] = filled
-
-    return series
 
 
 async def _load_counter_series(
@@ -311,8 +208,7 @@ async def load_hourly_statistics(
     """Hourly kWh for arbitrary cumulative statistics, keyed by caller key.
 
     ``statistic_to_key`` maps a Home Assistant statistic id (for example
-    ``sensor.cuadro_general``) to the key used by the service. The helper is
-    shared by the original energy endpoints and by the new Electricity tab.
+    ``sensor.cuadro_general``) to the key used by the service.
 
     One extra hour is fetched before the window so the first in-window hour has
     a preceding cumulative value to subtract.
@@ -337,135 +233,6 @@ async def load_hourly_statistics(
         )
         for statistic_id, series in by_entity.items()
     }
-
-
-async def load_hourly_energy(
-    session: AsyncSession,
-    building_ids: list[str],
-    start_local: datetime,
-    end_local: datetime,
-    *,
-    include_site: bool = False,
-) -> dict[str, dict[datetime, float]]:
-    """Hourly electrical kWh, keyed by building id (or ``SITE_ENERGY_KEY``).
-
-    ``include_site=True`` adds the whole-site meter used by Home Assistant's
-    "cuadro general" card. The site series is stored under ``SITE_ENERGY_KEY``
-    so it cannot be confused with a building.
-    """
-    entity_to_key: dict[str, str] = {}
-    if include_site:
-        entity_to_key[SITE_ENERGY_STATISTIC] = SITE_ENERGY_KEY
-    entity_to_key.update(
-        {
-            BUILDING_ENERGY_STATISTIC[building_id]: building_id
-            for building_id in building_ids
-            if building_id in BUILDING_ENERGY_STATISTIC
-        }
-    )
-    return await load_hourly_statistics(session, entity_to_key, start_local, end_local)
-
-
-async def load_hourly_gas(
-    session: AsyncSession,
-    start_local: datetime,
-    end_local: datetime,
-) -> dict[datetime, float]:
-    """Hourly site-wide gas consumption in kWh, keyed by local hour.
-
-    The meter reports m3; the value is converted with ``GAS_KWH_PER_M3`` so the
-    API keeps serving kWh like the synthetic model.
-    """
-    rows = await repository.fetch_statistics_sums(
-        session,
-        [SITE_GAS_STATISTIC],
-        _to_utc_naive(start_local - timedelta(hours=1)),
-        _to_utc_naive(end_local),
-    )
-    cubic_metres = cumulative_to_hourly(
-        [(start, total) for _, start, total in rows],
-        max_delta=settings.GAS_MAX_M3_PER_HOUR,
-        spread=False,
-    )
-    factor = settings.GAS_KWH_PER_M3
-    return {hour: value * factor for hour, value in cubic_metres.items()}
-
-
-async def load_hourly_outdoor_temperature(
-    session: AsyncSession,
-    start_local: datetime,
-    end_local: datetime,
-) -> dict[datetime, float]:
-    """Hourly outdoor temperature (°C), keyed by local hour."""
-    series = await _load_state_series(
-        session, [OUTDOOR_TEMPERATURE_ENTITY], start_local, end_local
-    )
-    return series.get(OUTDOOR_TEMPERATURE_ENTITY, {})
-
-
-async def _load_space_series(
-    session: AsyncSession,
-    entity_map: dict[str, str],
-    space_ids: list[str],
-    start_local: datetime,
-    end_local: datetime,
-) -> dict[str, dict[datetime, float]]:
-    """Generic per-space series loader for a ``{space_id: entity_id}`` map."""
-    entity_to_space = {
-        entity_map[space_id]: space_id
-        for space_id in space_ids
-        if space_id in entity_map
-    }
-    if not entity_to_space:
-        return {}
-
-    by_entity = await _load_state_series(
-        session, list(entity_to_space.keys()), start_local, end_local
-    )
-    return {
-        entity_to_space[entity_id]: series
-        for entity_id, series in by_entity.items()
-    }
-
-
-async def load_hourly_space_temperatures(
-    session: AsyncSession,
-    space_ids: list[str],
-    start_local: datetime,
-    end_local: datetime,
-) -> dict[str, dict[datetime, float]]:
-    """Hourly indoor temperature per space, keyed by space id then local hour."""
-    return await _load_space_series(
-        session, SPACE_TEMPERATURE_ENTITY, space_ids, start_local, end_local
-    )
-
-
-async def load_hourly_space_humidity(
-    session: AsyncSession,
-    space_ids: list[str],
-    start_local: datetime,
-    end_local: datetime,
-) -> dict[str, dict[datetime, float]]:
-    """Hourly relative humidity per space, keyed by space id then local hour."""
-    return await _load_space_series(
-        session, SPACE_HUMIDITY_ENTITY, space_ids, start_local, end_local
-    )
-
-
-async def load_hourly_space_co2(
-    session: AsyncSession,
-    space_ids: list[str],
-    start_local: datetime,
-    end_local: datetime,
-) -> dict[str, dict[datetime, float]]:
-    """Hourly CO2 (ppm) per instrumented space, keyed by space id then local hour.
-
-    Only A11/A12/A21/A22 have an air-quality sensor; the other spaces are
-    absent from the result and the caller falls back to the synthetic model.
-    """
-    return await _load_space_series(
-        session, SPACE_CO2_ENTITY, space_ids, start_local, end_local
-    )
 
 
 async def load_hourly_occupancy(

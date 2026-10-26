@@ -1,22 +1,22 @@
 import { DEFAULT_TAB_ID, isDashboardTabId } from './sections';
 import type { DashboardTabId } from './sections';
-import { DEFAULT_ENERGY_RANGE, ENERGY_RANGES } from '../types/energy';
-import type { EnergyRange } from '../types/energy';
+import { DASHBOARD_RANGES, DEFAULT_DASHBOARD_RANGE } from '../types/range';
+import type { DashboardRange } from '../types/range';
 
 /** Dashboard state that can be shared through the URL. */
 export interface DashboardUrlState {
   tab: DashboardTabId;
-  range: EnergyRange;
+  range: DashboardRange;
 }
 
 const TAB_PARAM = 'tab';
 const RANGE_PARAM = 'range';
 
-function isEnergyRange(value: string): value is EnergyRange {
-  return (ENERGY_RANGES as readonly string[]).includes(value);
+function isDashboardRange(value: string): value is DashboardRange {
+  return (DASHBOARD_RANGES as readonly string[]).includes(value);
 }
 
-/** Parse `?tab=electricidad&range=month`, falling back to the defaults. */
+/** Parse `?tab=iluminacion&range=month`, falling back to the defaults. */
 export function parseDashboardUrlState(search: string): DashboardUrlState {
   const params = new URLSearchParams(search);
   const tab = params.get(TAB_PARAM) ?? '';
@@ -24,7 +24,7 @@ export function parseDashboardUrlState(search: string): DashboardUrlState {
 
   return {
     tab: isDashboardTabId(tab) ? tab : DEFAULT_TAB_ID,
-    range: isEnergyRange(range) ? range : DEFAULT_ENERGY_RANGE,
+    range: isDashboardRange(range) ? range : DEFAULT_DASHBOARD_RANGE,
   };
 }
 

@@ -1,358 +1,139 @@
 # Guion de presentación · Smart ESI Estadísticas
 
-> **Duración objetivo:** 25 minutos de exposición + 5 minutos de preguntas.
-> **Idea central:** no presentar “otro panel de datos”, sino un **prototipo de gráficas para tomar decisiones** sobre electricidad, gas, ocupación y calidad del aire.
-
----
+> **Idea central:** la web convierte los datos de Smart ESI en dos vistas concretas para decidir: **Electricidad** (cuánto se gasta, dónde y frente a qué periodo) e **Iluminación** (cuánta luz se enciende sin necesidad).
 
 ## 1. Mensajes que deben quedar claros
 
-1. **Qué es:** módulo independiente de estadísticas para la web de Smart ESI, hecho para validar gráficas antes de integrarlas en la web pública.
-2. **Para qué sirve:** convertir datos de sensores en decisiones: dónde gastar menos, qué espacios revisar, cuándo se desperdicia energía.
-3. **Datos reales:** electricidad, gas, temperaturas, humedad, ocupación y CO₂ ya salen de la base de datos real de Home Assistant.
-4. **Honestidad:** el total eléctrico es real y el reparto parcial se marca como tal; lo que sigue siendo estimado se documenta y se avisa en la interfaz.
-5. **Siguiente paso:** validar con negocio qué gráficas aportan valor y conseguir los mapeos que faltan (iluminación, contadores por edificio, ocupación por aula).
+1. **Qué es:** un prototipo de estadísticas sobre el *recorder* de Home Assistant.
+2. **Para qué sirve:** detectar gasto, comparar periodos y localizar despilfarro.
+3. **Qué es real:** el consumo eléctrico sale de los contadores reales del centro; la iluminación usa un modelo determinista y, si hay datos, la ocupación real.
+4. **Qué no se pretende:** sustituir Home Assistant ni escribir en la base de datos. Todo es **solo lectura**.
 
----
+## 2. Reparto del tiempo (20 min)
 
-## 2. Reparto del tiempo
+| Bloque | Tiempo |
+| ------ | ------ |
+| Apertura y objetivo | 3 min |
+| Arquitectura y datos | 4 min |
+| Demo: Electricidad | 6 min |
+| Demo: Iluminación | 3 min |
+| Límites, siguientes pasos y preguntas | 4 min |
 
-| Minutos | Bloque | Qué decir |
-| --- | --- | --- |
-| 0–2 | Apertura | Qué es el proyecto y por qué existe. |
-| 2–5 | Problema y objetivo | Los datos existen, pero no están orientados a decidir. |
-| 5–8 | Solución y arquitectura | Seis pestañas, API, datos reales/mock, mismo stack. |
-| 8–20 | Demo guiada | Recorrido por las seis pestañas. |
-| 20–23 | Estado de los datos | Qué es real, qué es estimado y la corrección del cuadro general. |
-| 23–26 | Validación y resultados | Tests, build, lectura segura, utilidad. |
-| 26–28 | Limitaciones y siguientes pasos | Qué falta y qué se necesita. |
-| 28–30 | Cierre y preguntas | Pedir validación y prioridades. |
+Si hay prisa, mantener la demo de Electricidad y resumir Iluminación en una frase.
 
-> Si hay retraso, recortar la demo de Iluminación y Climatización a una frase cada una. No recortar la parte de “qué es real y qué no”.
+## 3. Apertura
 
----
+- Smart ESI ya recoge datos de sensores, pero faltaba una capa que los convirtiera en información útil.
+- Este prototipo se centra en dos preguntas:
+  - **¿Cuánto gastamos y cuándo?**
+  - **¿Qué luz dejamos encendida sin necesitarla?**
+- La web no es un panel más: cada gráfica responde a una decisión concreta.
 
-## 3. Apertura (2 min)
+## 4. Arquitectura en una frase
 
-### Qué decir
+```text
+React + Vite  ──/api──►  FastAPI  ──SELECT──►  MariaDB (recorder de Home Assistant)
+```
 
-- “Esto es un **prototipo independiente** de estadísticas para Smart ESI.”
-- “No modifica la web actual: vive en un proyecto aparte para probar gráficas nuevas sin riesgo.”
-- “El objetivo no es enseñar más datos, sino **ayudar a decidir** con ellos.”
+- **Frontend:** React, TypeScript, TanStack Query y Recharts.
+- **Backend:** FastAPI con servicios de agregación y caché en memoria.
+- **Datos:** realidad en Electricidad y ocupación de Iluminación; modelo sintético para el consumo de luminarias.
+- **Seguridad:** la base de datos se consulta solo con `SELECT`.
 
-### Por qué se hizo
+## 5. Demo guiada
 
-- La web ya recoge datos de sensores, pero faltaba una capa que los cruzara y los tradujera a decisiones.
-- Se quería comprobar si merece la pena integrar estas gráficas en la web pública.
-- Se ha replicado el mismo stack y el mismo estilo visual para que la integración posterior sea sencilla.
+### 5.1 Cabecera y periodo
 
----
+- La cabecera mantiene el periodo global **solo para Iluminación**.
+- Electricidad tiene sus propias fechas porque necesita comparar periodos independientes.
+- La URL guarda la pestaña y el periodo: se puede compartir un enlace.
 
-## 4. Problema y objetivo (3 min)
+### 5.2 Electricidad (6 min)
 
-### Problema
+1. **Filtros**
+   - Fecha inicial y final, ambas inclusivas.
+   - Edificio: todos, Módulo A, Módulo B o Fermín Caballero.
+   - Sector: cuadros de planta o CPD.
+   - Métrica: **consumo (kWh)** o **coste (€)**.
+   - La agrupación es automática: día, semana, mes o año según el rango.
 
-- Los datos están repartidos: electricidad, gas, ocupación, temperatura, CO₂.
-- Ver un dato suelto no dice qué hacer.
-- Ejemplos de preguntas que el panel intenta responder:
-  - ¿Cuánto consume el centro y cuándo?
-  - ¿Qué parte del gasto es carga base fuera de horario?
-  - ¿Qué edificio o espacio es menos eficiente?
-  - ¿Se calienta cuando no hay nadie?
-  - ¿La calidad del aire empeora cuando sube la ocupación?
-  - ¿Qué actuación tiene más impacto económico?
+2. **Indicadores**
+   - Total, media, mínimo y máximo.
+   - Base de centro cerrado: consumo medio en noches y fines de semana.
+   - Cobertura de los sectores de Fermín y parte no desglosada.
 
-### Objetivo del prototipo
+3. **Gráfica por edificios**
+   - Módulo A, Módulo B y Fermín Caballero.
+   - La línea de base permite ver cuánto se separa el consumo real del nivel de centro cerrado.
 
-- Un panel único, con **seis pestañas**, un **periodo global** (salvo Electricidad, con fechas
-  propias) y filtros por edificio/métrica.
-- Gráficas interactivas, exportables y compartibles por URL.
-- Contrato de API estable y posibilidad de cambiar entre datos reales y simulados.
+4. **Sectores de Fermín**
+   - Cuadros D, E, F, G, H, I, J, K y CPD.
+   - Se muestra el porcentaje sobre Fermín y se avisa de que la cobertura es parcial.
+   - El cuadro E aparece sin datos porque su acumulado no se mueve desde 2023.
 
----
+5. **Comparativa**
+   - Dos periodos independientes con el mismo número de intervalos.
+   - Dos líneas de color y una base común de centro cerrado.
+   - Botones para reutilizar el periodo principal o el año anterior.
 
-## 5. Solución y arquitectura (3 min)
+**Mensaje:** “No solo vemos el total; vemos qué edificio o cuadro se separa de lo esperado y si el cambio es real o estacional.”
 
-### Qué se ha construido
+### 5.3 Iluminación (3 min)
 
-- **Resumen:** KPIs del centro.
-- **Electricidad:** fechas propias, consumo/coste, reparto Módulo A / Módulo B / Fermín, sectores de
-  Fermín y comparativa de dos periodos con base de centro cerrado.
-- **Iluminación:** luminarias vs. luz natural, ranking por espacio y despilfarro.
-- **Climatización y gas:** gas vs. grados-día, válvulas vs. temperatura y aulas vacías.
-- **Ocupación y aire:** cruce ocupación ↔ CO₂.
-- **Decisiones:** oportunidades de ahorro priorizadas con €/año estimado.
+1. **Consumo**
+   - Barras de luminarias y otras cargas.
+   - Línea de horas de luz natural.
+   - KPIs de total, cuota de luminarias, coste y CO₂ asociado.
 
-### Arquitectura, en una frase
+2. **Ranking por espacio**
+   - Qué espacios concentran más consumo de luminarias.
+   - Se puede exportar a CSV.
 
-> “Navegador → React/Vite → API FastAPI → base de datos del recorder de Home Assistant, en modo solo lectura; o generador de datos sintéticos si no hay acceso.”
+3. **Luz encendida sin ocupación**
+   - kWh y €/año estimados.
+   - Horas de edificio vacío con luminarias encendidas.
 
-### Piezas técnicas
+**Mensaje:** “El coste no está solo en encender más, sino en encender cuando no hay nadie.”
 
-- **Frontend:** React 18 + TypeScript + Vite + TanStack Query + Recharts + Tailwind.
-- **Backend:** FastAPI + Pydantic, servicios de agregación y caché TTL.
-- **Datos:** `DATA_SOURCE=database` lee Home Assistant; `DATA_SOURCE=mock` permite funcionar sin VPN ni BD.
-- **Despliegue:** carpeta `deploy/` con Docker Compose + nginx como reverse proxy.
-- **Calidad:** API tipada, tests de backend y frontend, documentación por dominio.
+## 6. Qué es real y qué no
 
-### Decisiones de diseño que merece la pena mencionar
+| Dato | Estado | Origen |
+| ---- | ------ | ------ |
+| Electricidad del centro | **Real** | `statistics.sum` de `sensor.cuadro_general` |
+| Módulo A | **Real** | `sensor.edificio_a` |
+| Módulo B | **Real** | `sensor.edificio_b` |
+| Fermín Caballero | **Real (derivado)** | Cuadro General − Módulo A − Módulo B |
+| Cuadros de Fermín y CPD | **Real (parcial)** | `sensor.planta_*`, `sensor.sala_computacion` |
+| Ocupación para Iluminación | **Real si hay contadores** | Entradas − salidas |
+| Consumo de luminarias | **Mock** | Modelo determinista |
+| Coste eléctrico | **Calculado** | 0,20 €/kWh |
 
-- **Mismo contrato de API** en modo real y mock: el frontend no cambia.
-- **Periodo global** compartido por todas las gráficas.
-- **Mock determinista:** los mismos filtros devuelven siempre los mismos valores.
-- **Caché** para no repetir agregaciones costosas.
-- **Solo `SELECT`** sobre la base de datos de Home Assistant.
-
----
-
-## 6. Demo guiada (12 min)
+> El modo `mock` permite enseñar la web sin VPN ni base de datos. El indicador de la pestaña Electricidad muestra si el origen es `mock` o `database`.
 
-> Abrir la aplicación en `http://localhost:5174/`.
-> Tener Home Assistant abierto en otra ventana para comparar el cuadro general si preguntan.
-
-### 6.1 Cabecera y periodo global (1 min)
-
-- Cambiar de **Día → Semana → Mes → Año**.
-- Señalar que el cambio afecta a todas las gráficas **excepto Electricidad**, que tiene un rango de
-  fechas propio y agrupa los datos automáticamente.
-- Enseñar que la URL guarda `tab` y `range` global: se puede recargar o compartir la vista. Los
-  filtros de Electricidad aún no se guardan en la URL.
-- Mencionar el **export CSV** en las tablas.
-
-### 6.2 Resumen (1–2 min)
-
-- Enseñar las seis tarjetas:
-  - consumo eléctrico,
-  - edificio con mayor consumo medido,
-  - gas,
-  - ahorro potencial,
-  - porcentaje de aire bueno,
-  - CO₂ medio.
-- Mensaje: “Esto es la foto rápida para una reunión; el detalle está en las pestañas.”
-
-### 6.3 Electricidad (4 min)
-
-Orden recomendado:
-
-1. **Filtros:** elegir un rango de fechas absoluto y métrica consumo/coste. La agrupación
-   (día/semana/mes/año) se calcula automáticamente. La cabecera oculta el periodo global en esta
-   pestaña.
-   - Señalar total, media, mínimo, máximo y base fuera de horario.
-   - Decir: “El coste se calcula a 0,20 €/kWh; el consumo sale del recorder, solo lectura.”
-2. **Reparto por edificio:** enseñar Módulo A, Módulo B y Fermín Caballero.
-   - Explicar: “El total es `sensor.cuadro_general`; A y B son contadores directos; Fermín se
-     obtiene como total − A − B.”
-3. **Sectores de Fermín:** cuadros de planta + CPD y barra gris “No desglosado”.
-   - Enseñar la cobertura (≈30–38 %) y decir que nunca se reparte lo no medido.
-4. **Comparativa:** dos periodos independientes, dos líneas de color y base discontinua.
-   - Comparar 2026 frente a 2025 o dos semanas completas.
-5. **Base de centro cerrado:** noches L-V y fines de semana; los festivos aún no se excluyen.
-6. **Mensaje clave:** “El total es real; Fermín es una derivación y los cuadros son parciales, y lo
-   decimos claramente.”
-
-### 6.4 Iluminación (1–2 min)
-
-- Enseñar luminarias vs. luz natural.
-- Enseñar ranking por espacio y despilfarro con espacios vacíos.
-- **Aviso obligatorio:** el consumo de iluminación sigue siendo **estimado** porque falta confirmar el mapeo de controladores y potencia por circuito.
-- Valor: la ocupación que usa el cálculo sí es real.
-
-### 6.5 Climatización y gas (1–2 min)
-
-- Gas frente a grados-día.
-- Válvulas frente a temperatura.
-- Aulas vacías y coste estimado.
-- **Avisos:**
-  - el gas es real, pero **solo del centro completo** (hay un único contador);
-  - las válvulas siguen siendo simuladas porque no hay entidad real.
-
-### 6.6 Ocupación y aire (1–2 min)
-
-- Enseñar ocupación real por edificio.
-- Enseñar CO₂ y la relación con la ocupación.
-- **Avisos:**
-  - CO₂ real solo en A11, A12, A21 y A22;
-  - el reparto de ocupación por aula es estimado.
-
-### 6.7 Decisiones (2 min)
-
-- Enseñar el ranking de oportunidades y el ahorro €/año.
-- Explicar que es una **herramienta de priorización**, no una auditoría contable.
-- Mensaje: “Sirve para decidir qué mirar primero, no para certificar un ahorro.”
-
----
-
-## 7. Estado de los datos (3 min)
+## 7. Límites que conviene decir en voz alta
 
-### Tabla mental para la reunión
-
-| Dato | Estado | Comentario |
-| --- | --- | --- |
-| Electricidad total del centro | **Real** | `sensor.cuadro_general`, mismo que HA. |
-| Electricidad Módulo A / B | **Real** | `sensor.edificio_a` y `sensor.edificio_b`. |
-| Electricidad Fermín Caballero | **Real derivada** | `Cuadro General − Módulo A − Módulo B`. |
-| Sectores de Fermín | **Real parcial** | Cuadros de planta + CPD, ≈30–38 % de Fermín; el resto es “No desglosado”. |
-| Gas | **Real** | Solo centro completo; no hay contador por edificio. |
-| Grados-día y temperatura exterior | **Real** | Sensor meteorológico. |
-| Temperatura/humedad interior | **Real** | Sensores por espacio. |
-| Ocupación por edificio | **Real** | Contadores de entrada/salida. |
-| CO₂ | **Real en 4 aulas** | A11, A12, A21, A22. |
-| Iluminación | **Estimada** | Falta mapeo y potencia por circuito. |
-| Válvulas | **Estimada** | No hay entidad real. |
-| Ocupación por aula | **Estimada** | Los contadores son por edificio. |
-| Reparto eléctrico por espacio | **Estimado** | Se reparte por superficie/peso. |
-| Ahorro potencial | **Estimación** | Combina datos reales y modelos. |
+- Los cuadros de Fermín **no cubren todo el edificio**; la cobertura se muestra en pantalla y varía con el periodo.
+- El alcance actual son Electricidad e Iluminación.
+- Las fechas reales de Electricidad empiezan el **2023-12-22**.
+- La base de centro cerrado considera **L-V de 7:00 a 21:00** como horario laborable; noches y fines de semana cuentan como cierre. Los festivos no se excluyen.
+- El consumo de Iluminación es sintético: sirve para validar la interfaz y el método, no para auditorías.
 
-### Corrección importante que ya está aplicada
+## 8. Cierre
 
-- Antes el total eléctrico sumaba A+B y daba una fracción del consumo real.
-- Ahora:
-  - el total usa `sensor.cuadro_general`;
-  - Módulo A y Módulo B son contadores directos de sus edificios;
-  - Fermín Caballero se deriva como `Cuadro General − Módulo A − Módulo B`;
-  - el desglose de Fermín por cuadros es parcial y se añade “No desglosado” con su cobertura;
-  - se corrigió el desfase de una hora al interpretar `statistics.sum`.
-- Resultado: el total del panel coincide con el gráfico de HA para el mismo contador e intervalo.
+> “La web demuestra que los datos de Smart ESI ya permiten responder preguntas útiles. El siguiente paso no es añadir más gráficas, sino conectar más contadores y decidir qué actuaciones se quieren priorizar.”
 
-> Explicación corta si preguntan: “HA guarda el acumulado al final del periodo; la diferencia entre dos filas pertenece a la hora de la fila actual, no a la anterior.”
+## 9. Checklist antes de presentar
 
----
+- [ ] Backend en `8010` y frontend en `5174` (o Docker en `8080`).
+- [ ] `/health/live` responde `ok`.
+- [ ] La pestaña Electricidad abre con datos y el indicador de origen es el esperado.
+- [ ] Hay un rango con datos y otro con el año anterior para la comparativa.
+- [ ] La pestaña Iluminación carga sus tres gráficas.
+- [ ] Navegador sin zoom raro y CSV probado si se va a enseñar.
 
-## 8. Validación y resultados (3 min)
+## 10. Una frase por pestaña
 
-### Lo que ya está comprobado
-
-- Backend: **39 tests** superados.
-- Frontend: **18 tests** superados.
-- `typecheck` de TypeScript correcto.
-- Build de producción correcto.
-- `/health/live` confirma el modo de datos activo.
-- `/health/ready` comprueba la conexión real.
-- Lectura de base de datos **solo con `SELECT`**.
-
-### Valor que aporta
-
-- Unifica varias fuentes en una sola vista.
-- Traduce kWh a € y CO₂.
-- Permite comparar periodos y edificios.
-- Detecta patrones: carga base, picos, espacios ineficientes, aire deficiente.
-- Deja una base extensible para integrar nuevas gráficas.
-
----
-
-## 9. Limitaciones y siguientes pasos (2 min)
-
-### Limitaciones actuales
-
-- Iluminación y válvulas siguen siendo estimadas.
-- No hay gas por edificio: solo hay un contador.
-- No hay ocupación real por aula.
-- El reparto eléctrico por espacio es aproximado.
-- El CO₂ solo es real en cuatro aulas.
-- El despliegue Docker está preparado, pero falta validarlo en el entorno final.
-- Depende del esquema de la base de datos del recorder de HA.
-
-### Qué necesitamos para el siguiente salto
-
-1. Confirmar el mapeo de **controladores de iluminación → espacios**.
-2. Confirmar potencia/consumo por circuito de iluminación.
-3. Identificar contadores generales fiables por edificio.
-4. Valorar contadores de ocupación por aula o estimación más fina.
-5. Validar qué gráficas son realmente útiles para la web pública.
-6. Probar el despliegue en el entorno definitivo.
-
----
-
-## 10. Cierre (1–2 min)
-
-### Frase de cierre
-
-> “El prototipo ya demuestra que se pueden cruzar datos reales de Smart ESI y convertirlos en decisiones. Lo que falta no es principalmente técnico: falta confirmar qué datos queremos medir y qué decisiones queremos priorizar.”
-
-### Peticiones concretas
-
-- Validar las gráficas que más valor aportan.
-- Decidir qué pestañas pasan a la web pública.
-- Facilitar los mapeos pendientes de iluminación y contadores.
-- Acordar una prueba piloto con datos reales durante varias semanas.
-
----
-
-## 11. Preguntas previsibles y respuestas cortas
-
-### “¿Por qué no coincide con Home Assistant?”
-
-- Ya coincide para el total: usamos `sensor.cuadro_general` y la misma convención temporal.
-- Si se comparaba con A+B, era porque esos son subcontadores parciales, no el total.
-- En la pestaña de edificios se muestra “No desglosado” y la cobertura.
-
-### “¿Por qué hay datos simulados?”
-
-- Porque todavía no existen entidades o mapeos confirmados para iluminación, válvulas u ocupación por aula.
-- Se marcan como estimados; no se presentan como reales.
-
-### “¿Se puede poner ya en producción?”
-
-- El prototipo está validado funcionalmente y el despliegue está preparado.
-- Antes de publicarlo hay que cerrar los mapeos pendientes y validar el entorno final.
-
-### “¿Eso supone mucho coste?”
-
-- Los datos ya están en Home Assistant.
-- El prototipo es ligero: una API y una SPA.
-- El coste principal es el tiempo de integración y validación, no la infraestructura.
-
-### “¿Es seguro leer la base de datos de HA?”
-
-- Se usa un usuario de solo lectura.
-- Todas las consultas son `SELECT`.
-- No se escribe ni se modifica nada en el recorder.
-
-### “¿Cómo se añade una gráfica nueva?”
-
-- Endpoint + esquema + servicio en backend.
-- DTO + función de API + hook + componente en frontend.
-- Test e integración en la pestaña correspondiente.
-
-### “¿Qué es lo más importante que falta?”
-
-- El mapeo de iluminación y los contadores directos que falten (Fermín no tiene uno único).
-- Sin eso, el detalle por edificio/espacio seguirá siendo parcial.
-
----
-
-## 12. Checklist antes de la reunión
-
-- [ ] Backend arrancado en `127.0.0.1:8010`.
-- [ ] Frontend arrancado en `localhost:5174`.
-- [ ] `DATA_SOURCE=database` y conexión VPN/BD comprobada.
-- [ ] `/health/live` muestra `database`.
-- [ ] `/health/ready` responde correctamente.
-- [ ] Home Assistant abierto en otra ventana para comparar el cuadro general.
-- [ ] Pestaña de Resumen cargada antes de empezar.
-- [ ] Capturas de respaldo por si falla la red.
-- [ ] Un CSV exportado de ejemplo.
-- [ ] URL de una vista concreta preparada para enseñar que se puede compartir.
-- [ ] Cerrar sesión de pruebas y dejar la aplicación en la pestaña de inicio.
-
----
-
-## 13. Frases que conviene evitar
-
-- “Esto ya es producción.” → Mejor: “Es un prototipo validado, preparado para dar el salto.”
-- “Todos los datos son reales.” → Mejor: “Estos son reales y estos son estimados, y se distingue en la interfaz.”
-- “El ahorro es exactamente X €.” → Mejor: “El ahorro estimado permite priorizar; no es una auditoría.”
-- “Falta poco.” → Mejor: “Falta confirmar los mapeos y validar el despliegue final.”
-
----
-
-## 14. Resumen de una frase por pestaña
-
-| Pestaña | Frase para la reunión |
-| --- | --- |
-| Resumen | “La foto rápida del centro en el periodo elegido.” |
-| Electricidad | “Cuánto consume cada edificio y cada cuadro, y cuánto se aleja de la base de centro cerrado.” |
-| Iluminación | “Cuánto pesa la luz y cuánto se enciende sin necesidad.” |
-| Climatización | “Gas, grados-día y calor en aulas vacías.” |
-| Ocupación y aire | “Cómo se relaciona la gente con la calidad del aire.” |
-| Decisiones | “Qué actuaciones priorizar y cuánto podrían ahorrar.” |
+| Pestaña | Frase |
+| ------- | ----- |
+| Electricidad | “Cuánto gastamos, en qué edificio o cuadro y cómo se compara con otro periodo.” |
+| Iluminación | “Cuánta luz se enciende y cuánta se desperdicia cuando no hay nadie.” |

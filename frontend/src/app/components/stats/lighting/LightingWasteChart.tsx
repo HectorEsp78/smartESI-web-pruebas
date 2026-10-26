@@ -15,7 +15,7 @@ import { StatCard } from '../../ui/StatCard';
 import { useBuildings } from '../../../hooks/useBuildings';
 import { useLightingWaste } from '../../../hooks/useLighting';
 import { useGlobalRange } from '../../../context/RangeContext';
-import { ALL_BUILDINGS } from '../../../types/energy';
+import { ALL_BUILDINGS } from '../../../types/range';
 import { AXIS_LINE, AXIS_TICK, TOOLTIP_STYLE, buildingColor } from '../../../lib/chartTheme';
 import {
   RANGE_FORMATTING,

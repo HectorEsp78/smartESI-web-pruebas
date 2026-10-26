@@ -1,17 +1,17 @@
 # Documentación
 
-Índice de la documentación del módulo de estadísticas de Smart ESI.
+Documentación del módulo de estadísticas de Smart ESI. La web tiene dos pestañas: **Electricidad** e **Iluminación**.
 
 | Documento | Contenido |
 | --------- | --------- |
-| [Puesta en marcha](puesta-en-marcha.md) | Requisitos, comandos, puertos y resolución de problemas. |
-| [Arquitectura](arquitectura.md) | Visión general, estructura y contrato de la API. |
-| [Backend](backend.md) | Módulos, endpoints y migración a la base de datos real. |
-| [Frontend](frontend.md) | Estructura de la SPA, estilos y cómo añadir gráficas. |
-| [Datos](datos.md) | Origen de los datos, modelo sintético y migración a datos reales. |
-| [Estadísticos](estadisticos.md) | Qué estadístico se calcula, de dónde sale y para qué decisión sirve. |
-| [Componentes](componentes.md) | Cada pieza de la web: pestañas, UI reutilizable y gráficas. |
-| [Gráficas](graficas.md) | Qué muestra cada gráfica y para qué decisiones es útil. |
-| [Backlog](backlog.md) | Ideas y cruces de datos pendientes. |
+| [Puesta en marcha](puesta-en-marcha.md) | Requisitos, comandos, puertos y problemas habituales. |
+| [Arquitectura](arquitectura.md) | Visión general, capas y estructura del proyecto. |
+| [Backend](backend.md) | Módulos, endpoints, base de datos y tests. |
+| [Frontend](frontend.md) | Estado, componentes, estilos y tests. |
+| [Datos](datos.md) | Catálogo, modelo sintético, datos reales y cálculos. |
+| [Estadísticos](estadisticos.md) | Qué se calcula en cada gráfica y para qué sirve. |
+| [Componentes](componentes.md) | Piezas de la interfaz y su responsabilidad. |
+| [Gráficas](graficas.md) | Qué muestra cada gráfica y cómo interpretarla. |
+| [Backlog](backlog.md) | Ideas pendientes, limitadas a las dos pestañas. |
 
-Para volver al inicio del proyecto, consulta el [`README.md`](../README.md) raíz.
+Para volver al inicio, consulta el [`README.md`](../README.md) raíz.

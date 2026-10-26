@@ -8,10 +8,10 @@ import { RangeSelector } from './ui/RangeSelector';
 import { useGlobalRange } from '../context/RangeContext';
 import { DASHBOARD_TABS } from '../lib/sections';
 import type { DashboardTabId } from '../lib/sections';
-import { ENERGY_RANGES } from '../types/energy';
+import { DASHBOARD_RANGES } from '../types/range';
 import { RANGE_LABEL } from '../lib/format';
 
-const RANGE_OPTIONS = ENERGY_RANGES.map((range) => ({ value: range, label: RANGE_LABEL[range] }));
+const RANGE_OPTIONS = DASHBOARD_RANGES.map((range) => ({ value: range, label: RANGE_LABEL[range] }));
 
 interface HeaderProps {
   activeTab: DashboardTabId;
@@ -45,9 +45,9 @@ export function Header({ activeTab, onSelectTab: onSelectTabProp }: HeaderProps)
 
           <div className="flex flex-col items-start gap-2 md:items-end">
             <div className="hidden max-w-sm border-l border-slate-200 bg-white/70 px-4 py-2 text-right text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 md:block">
-              Estadísticas para la toma de decisiones
+              Estadísticas del centro
             </div>
-            {activeTab !== 'electricidad' && (
+            {activeTab === 'iluminacion' && (
               <div className="flex items-center gap-2 rounded-sm border border-slate-200 bg-white/90 px-3 py-2">
                 <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
                   Periodo

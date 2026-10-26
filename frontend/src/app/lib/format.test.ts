@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   formatEuro,
   formatKwh,
-  formatMetricValue,
   formatNumber,
   formatPercent,
   formatSignedPercent,
@@ -12,10 +11,6 @@ import {
 describe('format helpers', () => {
   it('formats numbers with Spanish decimal separator', () => {
     expect(formatNumber(12.5, 1)).toBe('12,5');
-  });
-
-  it('formats a metric value with its unit', () => {
-    expect(formatMetricValue(12.5, 'kWh')).toBe('12,5 kWh');
   });
 
   it('formats percentages', () => {

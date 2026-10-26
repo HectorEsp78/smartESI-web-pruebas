@@ -1,236 +1,100 @@
-# Datos: origen, modelo sintético y migración
+# Datos
 
-Este documento explica **de dónde salen los datos** que pinta el panel, **cómo se generan**
-mientras no hay base de datos y **qué habría que cambiar** para usar la instalación real.
+## Dos orígenes
 
-- Con `DATA_SOURCE=mock` (por defecto) el backend **inventa** los datos de forma determinista.
-- Con `DATA_SOURCE=database` lee de la base de datos del *recorder* de Home Assistant **solo con
-  `SELECT`**. Ya está implementado para **Electricidad**, **Climatización/gas**, **Ocupación** y
-  **CO₂/aire**; la iluminación (y el reparto de ocupación por aula) sigue en sintético.
-- La pestaña nueva de **Electricidad** tiene su propio mapa en `core/electricity_map.py`. El resto
-  de pestañas aún no migradas (Resumen, Iluminación, etc.) sigue usando `core/energy_map.py` y el
-  mapa anterior de `db/entity_map.py`.
-- El **contrato de la API no cambia** entre ambos modos: los *schemas* Pydantic y el frontend son
-  los mismos. Solo cambia la capa de datos que usa cada servicio.
+| Modo | Qué hace |
+| ---- | -------- |
+| `DATA_SOURCE=database` | Electricidad lee el *recorder* real de Home Assistant. Iluminación usa ocupación real si hay contadores y consumo sintético. |
+| `DATA_SOURCE=mock` | Todo se genera de forma determinista, sin base de datos. |
 
----
+El modo activo se muestra en `/health/live` y en los metadatos de Electricidad.
 
-## 1. Catálogo de edificios y espacios
+## Catálogo de edificios y espacios
 
-El inventario general está en [`backend/app/core/energy_map.py`](../backend/app/core/energy_map.py).
-Es el equivalente *placeholder* del `sensor_map.py` del proyecto original: los nombres y aforos son
-los reales, pero las magnitudes energéticas son simuladas.
+Está en [`backend/app/core/buildings.py`](../backend/app/core/buildings.py). Cada edificio declara:
 
-La pestaña de **Electricidad** usa además
-[`backend/app/core/electricity_map.py`](../backend/app/core/electricity_map.py), un catálogo
-independiente con los **tres edificios** de esta pestaña y sus **cuadros de planta/CPD**:
+- `id`, `label` y aforo.
+- `base_kw`: carga eléctrica nominal usada por el modelo sintético.
 
-| Edificio | Estadístico | Tipo |
-| -------- | ----------- | ---- |
-| Módulo A | `sensor.edificio_a` | Contador directo |
-| Módulo B | `sensor.edificio_b` | Contador directo |
-| Fermín Caballero | `sensor.cuadro_general − sensor.edificio_a − sensor.edificio_b` | Derivado |
+Cada espacio declara:
 
-Los sectores de Fermín son `sensor.planta_baja_red_cuadro_d`, `sensor.planta_baja_cuadro_e`,
-`sensor.planta_primera_cuadro_f`, `sensor.planta_primera_cuadro_g`,
-`sensor.planta_primera_cuadro_h` (físicamente en Planta Segunda), `sensor.planta_segunda_cuadro_i`,
-`sensor.planta_tercera_cuadro_j`, `sensor.planta_tercera_cuadro_k` y `sensor.sala_computacion`
-(CPD). Son **subcontadores parciales**, no el total de Fermín.
+- `id`, `label`, edificio y tipo.
+- `weight`: peso dentro del edificio.
+- `area_m2`.
+- `lighting_kw`: potencia instalada de luminarias.
 
-**Edificios** (`BUILDINGS`): un `BuildingConfig` por edificio.
+Los espacios se usan para el ranking y el reparto de Iluminación. El catálogo solo contiene datos eléctricos y de luminarias.
 
-| Campo | Uso |
-| ----- | --- |
-| `id`, `label` | Identificador y etiqueta visible. |
-| `max_capacity` | Aforo, usado para convertir ocupación a `%`. |
-| `base_kw` | Carga eléctrica nominal del edificio (kW). |
-| `setpoint_c` | Consigna de confort de calefacción (°C). |
-| `gas_base_kw` | Potencia nominal de la caldera (kW) con todas las válvulas abiertas. |
+## Electricidad real
 
-Agregados derivados:
+El mapa está en [`backend/app/core/electricity_map.py`](../backend/app/core/electricity_map.py).
 
-- `BUILDINGS_LIGHTING_KW`: potencia de luminarias instalada por edificio (suma de sus espacios).
-- `BUILDINGS_AREA_M2`: superficie útil por edificio (suma de sus espacios).
+- **Centro:** `sensor.cuadro_general`.
+- **Módulo A:** `sensor.edificio_a`.
+- **Módulo B:** `sensor.edificio_b`.
+- **Fermín Caballero:** no tiene contador único; se calcula como `Cuadro General − Módulo A − Módulo B`.
+- **Sectores de Fermín:** cuadros D, E, F, G, H, I, J, K y CPD.
 
-**Espacios** (`SPACES`): un `SpaceConfig` por espacio.
+Los sectores son submedidas **parciales**. La web calcula:
 
-| Campo | Uso |
-| ----- | --- |
-| `id`, `label`, `building_id`, `kind` | Identidad (`CLASSROOM` / `LABORATORY` / `COMMON`). |
-| `weight` | Peso relativo (~0..1) del espacio en la carga base del edificio. Se **normaliza** por edificio, así que no hace falta que sume 1. |
-| `area_m2` | Superficie, para el ratio kWh/m² y para repartir la ocupación del edificio. |
-| `lighting_kw` | Potencia de luminarias instalada, para separar luz del resto de cargas. |
-| `has_valve` | Si el espacio tiene electroválvula de calefacción. |
+```text
+sectors_total   = suma de los sectores con datos
+unmetered_total = Fermín − sectors_total
+sector_coverage = sectors_total / Fermín
+```
 
-Añadir un edificio o espacio aquí actualiza solo `/api/v1/meta/buildings`, los selectores del
-frontend y todas las gráficas **del mapa general**. La pestaña de Electricidad se mantiene aparte:
-para añadir un edificio o un cuadro allí hay que editar `core/electricity_map.py` y el endpoint
-`/api/v1/energy/electricity/meta`.
+La cobertura cambia con el periodo. En la prueba de 7 días fue del **38,0 %**; es habitual que esté en torno al 30–38 %.
 
----
+> El cuadro E (`sensor.planta_baja_cuadro_e`) aparece sin datos porque su acumulado no se mueve desde 2023. El cuadro H usa `sensor.planta_primera_cuadro_h`, pero físicamente es **Planta Segunda · Cuadro H**.
 
-## 2. Generador de datos sintéticos
+La fecha mínima con datos reales es **2023-12-22**.
 
-Vive en [`backend/app/services/mock_data.py`](../backend/app/services/mock_data.py). Todo es
-**determinista**: el valor para un edificio/espacio y una hora concretos es siempre el mismo, así
-que las respuestas son estables y fáciles de testear sin base de datos.
+## Electricidad sintética
 
-### 2.1 Aleatoriedad reproducible
+El modelo de `services/mock_data.py` genera kWh por hora a partir de:
 
-No se usa `random`: cada valor "aleatorio" es un hash del contexto.
+- perfil de actividad (día laborable, noche, fin de semana),
+- estacionalidad,
+- carga base del edificio,
+- ruido determinista.
 
-- `_uniform(*partes)`: valor en `[0, 1)` calculado con `zlib.crc32` del contexto (rápido y estable
-  entre procesos).
-- `_jitter(*partes, amplitude=a)`: ruido en `[-a, +a]`.
-- `stable_noise` / `valve_health`: ruido público estable por espacio.
-- `lru_cache` sobre las funciones clave (energía, ocupación, CO₂, temperatura, gas…) para que cada
-  hora se calcule una sola vez.
+En modo `mock` se generan también los sectores de Fermín con pesos fijos que suman el 30 %. El resto del edificio queda como “No desglosado”.
 
-### 2.2 Primitivas por hora
+## Iluminación
 
-| Función | Qué devuelve | Modelo (resumen) |
-| ------- | ------------ | ---------------- |
-| `hour_energy_kwh` | kWh eléctricos del edificio en la hora | `base_kw · (perfil + 0,10) · estación · ruido(±8 %)`. |
-| `hour_occupancy` | Personas en el edificio | `max_capacity · ratio · ruido(±15 %)`. |
-| `hour_co2` | CO₂ (ppm) | `415 + 950·ratio` (×0,85 de madrugada) · ruido(±6 %). |
-| `hour_temperature` | Temperatura interior (°C) a nivel edificio | `21 + 2,5·ratio` + estación. |
-| `hour_humidity` | Humedad relativa (%) | `44 + 12·ratio`, recortada a 20–95. |
-| `outdoor_temperature` | Temperatura exterior (°C) | Estacional (~4 °C en enero, ~26 °C en julio) + ciclo diario (pico ~15 h) + ruido. |
-| `daylight_hours` | Horas de luz natural del día | Tabla por mes para la latitud de Ciudad Real. |
-| `lighting_fraction` | Fracción de la electricidad que va a luminarias | 0,20 con luz natural suficiente (11–16 h, ≥12 h de día), 0,40 de noche, 0,33 el resto; suelo de 0,10–0,20 si está vacío. |
-| `space_valve_open` | ¿La electroválvula pide calor? | `False` si exterior ≥18 °C; `False`/`True` si está atascada cerrada/abierta; si no, horario laborable (L–V, 7–21 h) y exterior <17 °C. |
-| `space_occupancy` | Personas en el espacio | Ocupación del edificio repartida por superficie · ruido(±30 %). |
-| `space_temperature` | Temperatura del aula (°C) | Según válvula abierta, calor reciente o aula fría, más ocupación y ruido. |
-| `hour_gas_kwh` | Gas del edificio en la hora | `gas_base_kw · (válvulas abiertas / total) · (max(0, 18−exterior)/8) · ruido(±6 %)`. |
+El consumo de luminarias es sintético. Para cada hora:
 
-### 2.3 "Historia" que cuentan los datos
+1. Se estima la ocupación del edificio.
+2. Se calcula la fracción de electricidad que va a luminarias según ocupación, hora y luz natural.
+3. Se reparte esa fracción entre los espacios según `lighting_kw`.
+4. Se marca como vacío si la ocupación está por debajo de `EMPTY_OCCUPANCY_RATIO` (5 %).
 
-El modelo sintético está pensado para que las gráficas de decisión tengan algo que detectar:
+La ocupación puede ser real:
 
-- Algunas electroválvulas están **atascadas abiertas** (`valve_health > 0,8`): calientan aulas vacías
-  de noche y en fin de semana → gas despilfarrado.
-- Otras están **atascadas cerradas** (`valve_health < −0,8`): aulas frías, estado `fria`.
-- Las luminarias quedan **encendidas en espacios vacíos** una fracción del tiempo → despilfarro de
-  luz detectable.
-- El **verano** sube la electricidad (climatización) y el **invierno** dispara el gas: los cruces
-  estacionales son visibles.
+- Fermín Caballero: `sensor.entrada_fermin_caballero` − `sensor.salida_fermin_caballero`.
+- Módulo B: atributos `LTR_SUM` y `RTL_SUM` de `sensor.contador_personas`.
 
-### 2.4 Constantes del modelo
+Si faltan contadores, se usa el modelo sintético.
 
-| Constante | Valor | Significado |
-| --------- | ----- | ----------- |
-| `EMPTY_OCCUPANCY_RATIO` | `0.05` | Por debajo de este ratio (ocupación/aforo) el edificio se considera **vacío**. |
-| `VALVE_STUCK_THRESHOLD` | `0.8` | Umbral de `valve_health` para marcar una válvula como atascada. |
-| `HEATING_BASE_TEMPERATURE_C` | `18.0` | Base para calcular los **grados-día** de calefacción. |
-| Ventana laborable | L–V, 7:00–21:00 | Separa **actividad** de **carga base**. |
+## Agregación y conversión
 
----
+- Electricidad carga `statistics.sum` acumulado y lo convierte a kWh por hora.
+- La diferencia se atribuye a la hora en la que cierra el intervalo.
+- Un salto negativo se interpreta como reinicio y vale 0.
+- Un salto mayor que `ENERGY_MAX_KWH_PER_HOUR` se descarta.
+- Los huecos se reparten entre las horas transcurridas.
+- Todo se agrupa en la zona horaria `Europe/Madrid`.
 
-## 3. Agregación (buckets) y métricas
+## Coste
 
-La agregación temporal es común a todos los dominios:
+```text
+coste = kWh × 0,20 €/kWh
+```
 
-| `range` | Periodo | Buckets |
-| ------- | ------- | ------- |
-| `day` | últimas 24 h | 24 puntos **por hora** |
-| `week` | últimos 7 días | 7 puntos **por día** |
-| `month` | últimos 30 días | 30 puntos **por día** |
-| `year` | últimos 12 meses | 12 puntos **por mes natural** |
+Iluminación usa el mismo precio para el coste de luminarias. El CO₂ de Iluminación se calcula con `CO2_KG_PER_KWH` y es un indicador derivado.
 
-La pestaña nueva de **Electricidad** no usa esos rangos relativos: recibe `start` y `end`
-(`YYYY-MM-DD`, ambos inclusive) y agrupa por **día**, **semana** (lunes–domingo), **mes** o **año**
-natural. El primer y último intervalo pueden ser parciales si el rango no coincide con el inicio del
-periodo. La comparativa exige el mismo número de intervalos en los dos periodos.
+## Límites conocidos
 
-Conversión de métricas (electricidad): `cost = kWh · ENERGY_PRICE_EUR_PER_KWH`,
-`co2 = kWh · CO2_KG_PER_KWH`. El gas usa sus propios factores
-(`GAS_PRICE_EUR_PER_KWH`, `GAS_CO2_KG_PER_KWH`).
-
-Cada agregación pesada se calcula **una vez por (rango, edificio)** y se cachea con TTL
-(`STATS_CACHE_TTL_SECONDS`, 30 s; el clima usa como mínimo 300 s porque un `year` real es costoso).
-Ver [`docs/arquitectura.md`](arquitectura.md).
-
-El detalle de qué estadístico sale de qué fuente está en
-[`docs/estadisticos.md`](estadisticos.md).
-
----
-
-## 4. Datos reales y mapa de migración
-
-Con `DATA_SOURCE=database` el backend lee la BD del *recorder* de Home Assistant **solo con `SELECT`**
-(ver [`docs/backend.md`](backend.md) para el detalle de conexión y consultas). La correspondencia
-entidad → edificio/espacio se declara **explícitamente** en
-[`backend/app/db/entity_map.py`](../backend/app/db/entity_map.py), igual que hoy hace `energy_map.py`.
-
-### 4.1 Estado por estadístico
-
-| Estadístico | Origen real | Estado |
-| ----------- | ----------- | ------ |
-| Electricidad del centro | `statistics.sum` de `sensor.cuadro_general` (kWh). Es el mismo contador del “cuadro general” de HA. | ✅ Real |
-| Electricidad Módulo A | `statistics.sum` de `sensor.edificio_a` (kWh). | ✅ Real |
-| Electricidad Módulo B | `statistics.sum` de `sensor.edificio_b` (kWh). | ✅ Real |
-| Electricidad Fermín Caballero | `sensor.cuadro_general − sensor.edificio_a − sensor.edificio_b`. No hay un contador único de Fermín. | ✅ Real (derivada) |
-| Sectores de Fermín | `statistics.sum` de los cuadros `sensor.planta_*` y `sensor.sala_computacion` (CPD). Cubren ≈30–38 % de Fermín. | ✅ Real (parcial) |
-| Gas del sitio | `statistics.sum` de `sensor.daily_gas` (m³ → kWh con `GAS_KWH_PER_M3`). Solo `building=all`. | ✅ Real |
-| Grados-día | `statistics.mean`/`states` de `sensor.temperatura_meteo` + `HEATING_BASE_TEMPERATURE_C`. | ✅ Real |
-| Temperatura interior por espacio | `statistics.mean`/`states` de `sensor.sensor_temperatura_aXX` y `sensor.temperatura_shellyN`. | ✅ Real |
-| Humedad interior por espacio | `statistics.mean`/`states` de `sensor.sensor_humedad_aXX` y `sensor.humedad_shellyN`. | ✅ Real |
-| Ocupación por edificio | Contadores de entrada/salida: estado de `sensor.entrada_fermin_caballero`/`sensor.salida_fermin_caballero`; atributos `LTR_SUM`/`RTL_SUM` de `sensor.contador_personas`. | ✅ Real |
-| Reparto de ocupación por aula | Los contadores son por edificio; el reparto relativo entre aulas es sintético. | ⛔ Mock |
-| Electroválvulas | No existe entidad de válvula en la BD. | ⛔ Mock |
-| Iluminación | `light.controller1..7` y `sensor.sensor_luz_aXX` existen, pero falta confirmar el mapeo a espacios y la potencia por circuito. | ⛔ Mock |
-| CO₂ / aire | `air_quality.co2_3`, `co2_1`, `co2_2` y `co2_4` (A11, A12, A21, A22). El resto de espacios, mock. | ✅ Real (4 aulas) |
-| Eficiencia (kWh/persona·hora, endpoint legacy) | Total del cuadro general + ocupación real; el desglose por edificio/espacio usa los subcontadores A/B y se reparte por superficie. | ✅ Real (total) · ⚠️ Parcial (desglose) |
-
-> El **total eléctrico** sale de `sensor.cuadro_general`, igual que en el panel de energía de HA.
-> La pestaña nueva de Electricidad reparte ese total en **Módulo A**, **Módulo B** y
-> **Fermín Caballero** (el resto). Los cuadros de planta y el CPD son subcontadores parciales de
-> Fermín: la API devuelve `sectors_total`, `unmetered_total` y `sector_coverage`, y la UI muestra el
-> resto como **“No desglosado”**. Nunca se reparte el consumo no medido entre los sectores.
->
-> Las pestañas aún no migradas (Resumen, Iluminación, Climatización, etc.) siguen usando el mapa anterior de
-> `db/entity_map.py`, donde `sensor.edificio_a` se asociaba a Fermín Caballero. Esa asociación es la
-> que se corrige en el mapa nuevo de Electricidad; se irá sustituyendo al migrar el resto.
->
-> El **gas** se sirve solo para el conjunto del centro porque en la instalación hay **un único
-> contador**. Al pedir un edificio concreto, el gas es `0` (la temperatura y los grados-día sí son
-> reales). La **ocupación** ya es real a nivel de edificio, pero las **válvulas** siguen siendo
-> sintéticas: el gas estimado en aulas vacías (`/climate/empty-spaces`) reparte el gas real según
-> ese modelo, así que es una **estimación**.
->
-> El **CO₂** solo es real en las cuatro aulas instrumentadas; en el resto de espacios y en Módulo B
-> la gráfica de ocupación–aire usa el modelo sintético para esas series. Los contadores de personas
-> pueden descuadrarse si se reinician o pierden lecturas; se acotan al aforo del edificio.
-
-### 4.2 Cómo se convierte la BD en series horarias
-
-En [`backend/app/db/database_data.py`](../backend/app/db/database_data.py):
-
-- **Contadores (`statistics.sum`)**: `load_hourly_statistics` convierte cualquier conjunto de
-  estadísticos acumulados en series horarias y lo comparten los endpoints antiguos y Electricidad.
-  La energía de una hora es la diferencia entre dos lecturas acumuladas consecutivas. HA guarda el `sum` al **final** del periodo: la diferencia entre las filas
-  de 10:00 y 11:00 es el consumo de 11:00–12:00 y se asigna a la hora **11:00** (la fila actual), no
-  a la anterior. Es la misma convención del panel de energía de HA.
-  - Los volcados de HA tras un corte (varios días planos y luego un salto) se **reparten** entre las
-    horas del hueco: son consumo real.
-  - Los valores negativos (reinicio del contador) y los que superan el tope
-    (`ENERGY_MAX_KWH_PER_HOUR`, `GAS_MAX_M3_PER_HOUR`) se **descartan**.
-  - El `sum` del gas tiene periodos con saltos corruptos: al ser irreales, se descartan en bloque.
-- **Estados (`states`)**: media de las lecturas numéricas por hora. Como HA solo escribe al cambiar el
-  valor, se rellena hacia delante con el último valor conocido (*fill-forward*), sembrado con el
-  último estado anterior a la ventana.
-- Los *timestamps* de HA son UTC sin zona; la conversión a hora local (Europe/Madrid) se hace en
-  Python, con `SET time_zone='+00:00'` en la sesión.
-
-### 4.3 Pendiente
-
-- Migrar el resto de pestañas (Resumen, Iluminación, Climatización, etc.) al mapa nuevo de
-  edificios y al esquema de fechas absolutas, para que dejen de usar la asociación antigua
-  `edificio_a → Fermín Caballero`.
-- Mapear iluminación (`light.controller1..7`, `sensor.sensor_luz_aXX`) a edificios/espacios y
-  obtener una medida de potencia o consumo por circuito; hasta entonces la pestaña sigue en mock.
-- Reparto real de la ocupación por aula (los contadores actuales son por edificio).
-- Electroválvulas: no existen como entidad; si se añaden, sustituir el modelo de válvulas.
-- Ampliar el CO₂ a más espacios (hoy solo A11/A12/A21/A22).
-- Optimizar `statistics.mean` para más sensores: ya se usa cuando existe, y queda el *fallback* a
-  `states` para los que no tienen estadísticas de largo plazo.
+- La iluminación no tiene mapeo real de consumo por luminaria; el reparto es sintético.
+- Los festivos no se excluyen de la base de centro cerrado.
+- La base de centro cerrado usa L-V de 7:00 a 21:00 como horario laborable.

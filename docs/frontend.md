@@ -1,113 +1,130 @@
-# Frontend (React + Vite)
+# Frontend
 
-Código en [`frontend/src/`](../frontend/src). Réplica del stack y del estilo del proyecto original.
+SPA en **React + TypeScript + Vite**. Usa **TanStack Query** para las consultas, **Recharts** para las gráficas y **Tailwind CSS** para los estilos.
 
-## Stack
+## Arranque
 
-| Pieza | Uso |
-| ----- | --- |
-| React 18 + TypeScript | UI. |
-| Vite 6 | Dev server y build. `base: '/'`, puerto `5174`, proxy `/api` → `127.0.0.1:8010`. |
-| React Router 7 | Rutas (`createBrowserRouter`). |
-| TanStack Query 5 | Peticiones, caché, reintentos y refresco. |
-| Tailwind CSS 4 | Estilos (utilidades en el JSX, tokens en `styles/theme.css`). |
-| Recharts 3 | Gráficas (área, barras, líneas, dispersión y composed). |
-| motion | Animación de la línea activa de las pestañas. |
-| lucide-react | Iconos. |
-| date-fns | Formateo de fechas en ejes y tooltips. |
-| Vitest + Testing Library + jsdom | Tests. |
-
-> `@mui/material` y `@emotion/*` están en `package.json` para reflejar el mismo stack declarado del
-> original, pero las gráficas usan Tailwind + Recharts (igual que las gráficas del proyecto
-> original). No se importan en el código, así que no entran en el bundle.
-
-## Capas
-
-```text
-pages/Stats  →  components/stats/*  →  hooks/use*  →  api/*  →  fetch /api/v1/...
-                     │                     │
-     context/RangeContext (periodo)   lib/ (format, chartTheme, sections)  ·  types/ (DTOs)
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5174
 ```
 
-- **`api/`**: una función `fetch*` por endpoint (`energy.ts`, `electricity.ts`, `lighting.ts`,
-  `climate.ts`, `decisions.ts`, `correlation.ts`, `meta.ts`). La resolución de la URL vive en
-  `api/baseUrl.ts` y las utilidades compartidas en `api/http.ts`.
-- **`context/RangeContext.tsx`**: `RangeProvider` guarda el **periodo global**; `useGlobalRange()` lo
-  consumen la cabecera y las gráficas de las pestañas aún no migradas. **Electricidad** tiene su
-  propio rango absoluto (`start`/`end`) y no usa este contexto; la cabecera oculta el selector en esa
-  pestaña.
-- **`hooks/`**: envuelven la API en `useQuery` y devuelven `{ data, isLoading, isFetching, error,
-  retry }`. Usan `placeholderData` para no parpadear al cambiar de rango.
+Comandos:
 
-  | Hook | Query key | `staleTime` |
-  | ---- | --------- | ----------- |
-  | `useBuildings` | `['meta','buildings']` | 30 min |
-  | `useElectricityMeta` | `['electricityMeta']` | 30 min |
-  | `useElectricityStats` | `['electricity', query]` | 60 s |
-  | `useElectricityCompare` | `['electricityCompare', query]` | 60 s |
-  | `useEnergyConsumption` | `['energyConsumption', range, building, metric]` | 60 s |
-  | `useEnergyByBuilding` | `['energyByBuilding', range, metric]` | 60 s |
-  | `useEnergyBreakdown` | `['energyBreakdown', range, building]` | 60 s |
-  | `useEnergyCompare` | `['energyCompare', range, building, metric]` | 60 s |
-  | `useEnergyEfficiency` | `['energyEfficiency', range]` | 60 s |
-  | `useLightingConsumption` / `useLightingBySpace` / `useLightingWaste` | `['lighting*', range, building]` | 60 s |
-  | `useGas` / `useValves` / `useEmptySpaces` | `['gas'/'valves'/'emptySpaces', range, building]` | 60 s |
-  | `useDecisions` | `['decisions', range, building]` | 60 s |
-  | `useOccupancyAirQuality` | `['occupancyAirQuality', range, building]` | 60 s |
+```bash
+npm run typecheck
+npm run test:run
+npm run build
+npm run preview
+```
 
-- **`components/ui/`**: piezas reutilizables — `ChartCard` (tarjeta con cabecera y estados
-  cargando/error/vacío), `RangeSelector`, `SelectField`, `StatCard` y `SectionHeading`.
-- **`components/stats/`**: las gráficas, con una subcarpeta por dominio: `electricity/`,
-  `lighting/`, `climate/`, `decisions/`, más las de nivel superior (`OverviewSection`,
-  `OccupancyAirQualityChart`). La pestaña de Electricidad se agrupa en
-  `electricity/ElectricityDashboard.tsx`; el resto de componentes mantiene sus propios controles de
-  edificio y métrica y toma el periodo del contexto global.
-- **`pages/Stats.tsx`**: envuelve todo en `RangeProvider`, pinta el `Header` y el **contenido de la
-  pestaña activa**. Las pestañas se definen en `lib/sections.ts`. La pestaña y el periodo global se
-  reflejan en la URL (`?tab=electricidad&range=month`) con `lib/urlState.ts`. Los filtros propios de
-  Electricidad (fechas, ámbito) viven en el estado del componente y no se guardan aún en la URL.
-  La granularidad no se elige a mano: se deriva del rango de fechas.
-- **`components/Header.tsx`**: logos y banner, la navegación por pestañas y el **selector de periodo
-  global** (oculto en Electricidad, que tiene controles propios).
-- **`lib/csv.ts`** + `components/ui/ExportCsvButton.tsx`: exportación a CSV (separador `;` y BOM
-  UTF-8 para Excel) de las tablas de Decisiones, Electricidad (edificios y sectores) y luminarias
-  por espacio.
+El proxy de desarrollo envía `/api/*` a `http://127.0.0.1:8010`.
 
-En [`componentes.md`](componentes.md) hay el catálogo detallado de cada pieza de la web.
+## Estructura
 
-## Estilos y tokens
+```text
+frontend/src/app/
+├── api/
+│   ├── electricity.ts      Consultas de Electricidad
+│   ├── lighting.ts         Consultas de Iluminación
+│   ├── meta.ts             Edificios
+│   └── http.ts             fetch + errores
+├── components/
+│   ├── Header.tsx
+│   ├── stats/electricity/  Dashboard, filtros, resumen y gráficas
+│   ├── stats/lighting/     Consumo, ranking y despilfarro
+│   └── ui/                 ChartCard, StatCard, ExportCsvButton, SelectField, RangeSelector
+├── context/
+│   └── RangeContext.tsx    Periodo global de Iluminación
+├── hooks/
+│   ├── useElectricity.ts
+│   ├── useLighting.ts
+│   └── useBuildings.ts
+├── lib/
+│   ├── electricity.ts      Fechas, periodos y granularidad automática
+│   ├── format.ts           Números, kWh, € y porcentajes
+│   ├── chartTheme.ts       Paletas y estilos de ejes
+│   ├── csv.ts              Exportación CSV
+│   ├── sections.ts         Pestañas
+│   └── urlState.ts         Pestaña y periodo en la URL
+├── pages/
+│   ├── Stats.tsx
+│   └── NotFound.tsx
+└── types/                  Contratos TypeScript
+```
 
-- [`styles/theme.css`](../frontend/src/styles/theme.css) define los tokens (variables CSS mapeadas a
-  Tailwind con `@theme`): `primary` `#0497d7` (azul UCLM), `accent` `#b30139` (granate ESI),
-  `success`, `warning`, `destructive`, y las fuentes `font-heading` (Manrope), `font-room-card`
-  (Montserrat) y la del cuerpo (Source Sans 3).
-- Las fuentes se cargan con `<link>` de Google Fonts desde [`index.html`](../frontend/index.html)
-  (no con `@import` en el CSS, para que el bundler no las descarte).
-- Usa siempre las clases de token (`text-primary`, `border-accent`…) en lugar de colores sueltos.
-- Patrón de títulos de sección: `border-l-4 border-accent` con el título en mayúsculas y color
-  `accent` (ver `SectionHeading`).
-- Colores de las gráficas centralizados en [`lib/chartTheme.ts`](../frontend/src/app/lib/chartTheme.ts)
-  (paleta institucional y color por edificio).
+## Pestañas y estado
 
-## Cómo añadir una gráfica nueva
+- `pages/Stats.tsx` renderiza la pestaña activa.
+- `lib/sections.ts` define **Electricidad** e **Iluminación**; la pestaña por defecto es Electricidad.
+- `lib/urlState.ts` sincroniza `?tab=` y `?range=`. Los valores desconocidos vuelven a los valores por defecto.
+- El selector global de periodo se muestra **solo en Iluminación**.
+- Electricidad mantiene sus propias fechas y su comparativa.
 
-1. Añade el endpoint en el backend (router + schema + servicio) si necesitas datos nuevos.
-2. Añade el DTO en `src/app/types/`, la función `fetch*` en `src/app/api/` y el hook en
-   `src/app/hooks/`.
-3. Crea el componente en `src/app/components/stats/<dominio>/` usando `ChartCard` para la tarjeta y
-   `RangeSelector`/`SelectField` para los controles **locales** (edificio, métrica). Para el periodo,
-   usa `useGlobalRange()` y no añadas un selector propio **salvo que la pestaña migre a fechas
-   absolutas**, como hace `ElectricityDashboard`.
-4. Añádelo al contenido de la pestaña correspondiente en `pages/Stats.tsx`. Si creas una pestaña
-   nueva, añádela a `lib/sections.ts` y a `TAB_HEADING`.
-5. Añade un test si la lógica lo merece.
+## Electricidad
+
+Componentes:
+
+| Componente | Responsabilidad |
+| ---------- | --------------- |
+| `ElectricityDashboard` | Carga metadatos/estadísticas, calcula granularidad y compone la vista. |
+| `ElectricityFilters` | Fechas, edificio, sector y métrica. |
+| `ElectricitySummary` | Total, media, mínimo, máximo, base y cobertura. |
+| `ElectricityBuildingsChart` | Barras apiladas de los tres edificios + línea de base. |
+| `ElectricitySectorsChart` | Sectores de Fermín, CPD y “No desglosado”. |
+| `ElectricityComparisonChart` | Dos periodos independientes con dos líneas y base común. |
+
+Reglas de interfaz:
+
+- Fechas inclusivas y validación de fecha final.
+- La agrupación se deduce del rango con `granularityForPeriod`: día hasta 31 días, semana hasta 120, mes hasta 3 años y año para rangos mayores.
+- No hay selector “Agrupar por”.
+- El indicador de origen muestra `mock` o `database`.
+- Los avisos de cobertura y de intervalos parciales son explícitos.
+- La comparativa exige el mismo número de intervalos y avisa si las fechas son inválidas o anteriores al inicio de los datos.
+
+## Iluminación
+
+| Componente | Responsabilidad |
+| ---------- | --------------- |
+| `LightingConsumptionChart` | Luminarias frente a otras cargas y horas de luz natural. |
+| `LightingBySpaceChart` | Ranking de espacios y exportación CSV. |
+| `LightingWasteChart` | Luz encendida sin ocupación y coste anualizado. |
+
+El periodo y el edificio son globales para las tres gráficas.
+
+## Hooks y caché
+
+| Hook | Consulta | `staleTime` |
+| ---- | -------- | ----------- |
+| `useElectricityMeta` | `/energy/electricity/meta` | 30 min |
+| `useElectricity` | `/energy/electricity` | 60 s |
+| `useElectricityCompare` | `/energy/electricity/compare` | 60 s |
+| `useLightingConsumption` | `/lighting/consumption` | 60 s |
+| `useLightingBySpace` | `/lighting/by-space` | 60 s |
+| `useLightingWaste` | `/lighting/waste` | 60 s |
+| `useBuildings` | `/meta/buildings` | 30 min |
+
+## Estilos
+
+- La paleta institucional está en `styles/theme.css` y `lib/chartTheme.ts`.
+- Electricidad tiene colores propios de edificios y sectores para no alterar Iluminación.
+- Las tarjetas usan `ChartCard` y `StatCard`.
+- Los estados de carga, error y vacío son explícitos y tienen botón **Reintentar** cuando aplica.
 
 ## Tests
 
 ```bash
-cd frontend
-npm run test:run        # una pasada
-npm test                # modo watch
-npm run test:coverage   # informe en coverage/
-npm run typecheck       # comprobación de tipos
+npm run test:run
 ```
+
+Cubren:
+
+- URL y pestañas.
+- Fechas, comparativa y granularidad automática.
+- Formato y CSV.
+- Cliente API de Electricidad.
+- Componente `ChartCard`.
+
+`npm run typecheck` y `npm run build` deben pasar antes de entregar.

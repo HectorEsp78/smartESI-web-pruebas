@@ -35,7 +35,8 @@ Las variables del backend se leen de `deploy/.env` (el mismo nombre que en
 | `CORS_ALLOW_ORIGINS` | `http://localhost:8080` | Origen exacto con el que se abre la web. |
 | `DATA_SOURCE` | `database` | `mock` o `database`. |
 | `DB_*` | — | Conexión a MariaDB; requiere VPN de la UCLM si la BD es interna. |
-| `USE_STATISTICS_FOR_STATES` | `true` | Usa `statistics` para temperaturas/humedad (más rápido en `year`). |
+| `ENERGY_PRICE_EUR_PER_KWH` | `0.20` | Precio del kWh usado en Electricidad e Iluminación. |
+| `CO2_KG_PER_KWH` | `0.15` | Factor de emisiones de la electricidad. |
 
 > Con `DATA_SOURCE=mock` no hace falta base de datos: sirve para comprobar que la imagen y el
 > *proxy* funcionan antes de conectarse a la red interna.

@@ -1,39 +1,30 @@
-"""Synthetic data generator for the statistics prototype.
+"""Deterministic synthetic data used when no recorder database is available.
 
-Everything here is *deterministic*: the value for a given building/space and a
-given hour is always the same, so responses are stable across requests (and easy
-to test) without needing a database. The shapes are realistic (activity during
-the working day, quieter nights/weekends, seasonal HVAC peaks) but the numbers
-are invented.
+Every value depends only on the building/space and the hour, so responses are
+stable across requests and easy to test. The shapes are realistic (activity
+during the working day, quieter nights/weekends) but the numbers are invented.
 
-When ``DATA_SOURCE=database`` is enabled, these functions are replaced by real
-queries against the Home Assistant recorder database.
+Electricity can run against the real recorder (``DATA_SOURCE=database``);
+Lighting always uses this model for consumption and uses the real occupancy
+counters when they are available.
 """
 
 from __future__ import annotations
 
-import hashlib
 import math
 import zlib
-from datetime import datetime, timedelta
+from datetime import datetime
 from functools import lru_cache
 
-from app.core.clock import local_tz
-from app.core.energy_map import (
+from app.core.buildings import (
     BUILDINGS_BY_ID,
     SPACES_BY_BUILDING,
-    SPACES_BY_ID,
     BuildingConfig,
     SpaceConfig,
 )
+from app.core.clock import local_tz
 
 # --- Deterministic pseudo-random helpers --------------------------------------
-
-
-def _seed(*parts: object) -> int:
-    payload = "|".join(str(part) for part in parts)
-    digest = hashlib.sha256(payload.encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big")
 
 
 def _uniform(*parts: object) -> float:
@@ -61,7 +52,11 @@ def _hour_key(local: datetime) -> str:
     return local.strftime("%Y-%m-%dT%H")
 
 
-# --- Energy --------------------------------------------------------------------
+def _floor_local(when: datetime) -> datetime:
+    return when.astimezone(local_tz()).replace(minute=0, second=0, microsecond=0)
+
+
+# --- Electricity ---------------------------------------------------------------
 
 
 def _activity_profile(local: datetime) -> float:
@@ -82,9 +77,9 @@ def _activity_profile(local: datetime) -> float:
 
 
 def _season_factor(month: int) -> float:
-    if month in (12, 1, 2):  # winter heating
+    if month in (12, 1, 2):
         return 1.18
-    if month in (6, 7, 8):  # summer cooling
+    if month in (6, 7, 8):
         return 1.28
     if month in (5, 9):
         return 1.10
@@ -142,61 +137,7 @@ def _hour_occupancy_cached(building_id: str, local: datetime) -> int:
     return max(0, round(building.max_capacity * ratio * jitter))
 
 
-# --- Air quality ---------------------------------------------------------------
-
-
-def hour_co2(building: BuildingConfig, occupancy: int, when: datetime) -> float:
-    """Estimated CO2 concentration (ppm) given the current occupancy."""
-    return _hour_co2_cached(building.id, _floor_local(when))
-
-
-@lru_cache(maxsize=100_000)
-def _hour_co2_cached(building_id: str, local: datetime) -> float:
-    building = BUILDINGS_BY_ID[building_id]
-    occupancy = _hour_occupancy_cached(building_id, local)
-    ratio = occupancy / building.max_capacity if building.max_capacity else 0.0
-    value = 415.0 + 950.0 * ratio
-    if local.hour < 7:  # windows / ventilation flush the air overnight
-        value *= 0.85
-    jitter = 1.0 + _jitter("co2", building_id, _hour_key(local), amplitude=0.06)
-    return round(value * jitter, 1)
-
-
-def hour_temperature(building: BuildingConfig, occupancy: int, when: datetime) -> float:
-    """Estimated indoor temperature (°C)."""
-    return _hour_temperature_cached(building.id, _floor_local(when))
-
-
-@lru_cache(maxsize=100_000)
-def _hour_temperature_cached(building_id: str, local: datetime) -> float:
-    building = BUILDINGS_BY_ID[building_id]
-    occupancy = _hour_occupancy_cached(building_id, local)
-    ratio = occupancy / building.max_capacity if building.max_capacity else 0.0
-    value = 21.0 + 2.5 * ratio
-    if local.month in (6, 7, 8):
-        value += 1.5
-    if local.month in (12, 1, 2):
-        value -= 0.8
-    jitter = _jitter("temp", building_id, _hour_key(local), amplitude=0.06)
-    return round(value * (1 + jitter), 1)
-
-
-def hour_humidity(building: BuildingConfig, occupancy: int, when: datetime) -> float:
-    """Estimated relative humidity (%)."""
-    return _hour_humidity_cached(building.id, _floor_local(when))
-
-
-@lru_cache(maxsize=100_000)
-def _hour_humidity_cached(building_id: str, local: datetime) -> float:
-    building = BUILDINGS_BY_ID[building_id]
-    occupancy = _hour_occupancy_cached(building_id, local)
-    ratio = occupancy / building.max_capacity if building.max_capacity else 0.0
-    value = 44.0 + 12.0 * ratio
-    jitter = _jitter("hum", building_id, _hour_key(local), amplitude=0.10)
-    return round(min(95.0, max(20.0, value * (1 + jitter))), 1)
-
-
-# --- Weather & daylight --------------------------------------------------------
+# --- Daylight and lighting -----------------------------------------------------
 
 # Below this occupancy ratio a space/building is considered "empty" for the
 # lighting-waste analysis (lights on with nobody inside).
@@ -223,27 +164,6 @@ def daylight_hours(when: datetime) -> float:
     """Nominal hours of daylight for the day of ``when``."""
     local = when.astimezone(local_tz())
     return _DAYLIGHT_HOURS_BY_MONTH[local.month]
-
-
-def outdoor_temperature(when: datetime) -> float:
-    """Synthetic outdoor temperature (°C): seasonal + daily cycle + noise."""
-    return _outdoor_temperature_for_hour(when.astimezone(local_tz()).replace(
-        minute=0, second=0, microsecond=0
-    ))
-
-
-@lru_cache(maxsize=20_000)
-def _outdoor_temperature_for_hour(local: datetime) -> float:
-    day_of_year = local.timetuple().tm_yday
-    # ~4 °C around mid-January, ~26 °C around mid-July.
-    seasonal = 15.0 - 11.0 * math.cos(2 * math.pi * (day_of_year - 15) / 365.0)
-    hour = local.hour + local.minute / 60.0
-    daily = 6.0 * math.sin(2 * math.pi * (hour - 9) / 24.0)  # peak ~15h, min ~3h
-    noise = 2.5 * _jitter("outdoor", _hour_key(local), amplitude=1.0)
-    return round(seasonal + daily + noise, 1)
-
-
-# --- Lighting (luminarias) -----------------------------------------------------
 
 
 def _empty_lighting_floor(building: BuildingConfig) -> float:
@@ -279,139 +199,3 @@ def space_lighting_kw_share(space: SpaceConfig) -> float:
     spaces = SPACES_BY_BUILDING.get(space.building_id, [])
     total = sum(item.lighting_kw for item in spaces)
     return space.lighting_kw / total if total > 0 else 0.0
-
-
-# --- Heating: solenoid valves (electroválvulas) and gas -------------------------
-
-
-VALVE_STUCK_THRESHOLD = 0.8
-
-
-def valve_health(space: SpaceConfig) -> float:
-    """Deterministic valve condition in [-1, 1].
-
-    Negative values model a valve stuck closed (the room never heats); positive
-    values model a valve stuck open (the room heats even when it is empty and out
-    of schedule). Near zero is a correctly working valve.
-    """
-    return _valve_health_for_space(space.id)
-
-
-@lru_cache(maxsize=2048)
-def _valve_health_for_space(space_id: str) -> float:
-    return stable_noise("valve-health", space_id, amplitude=1.0)
-
-
-def _floor_local(when: datetime) -> datetime:
-    return when.astimezone(local_tz()).replace(minute=0, second=0, microsecond=0)
-
-
-@lru_cache(maxsize=250_000)
-def _valve_open_for(space_id: str, local: datetime) -> bool:
-    space = SPACES_BY_ID[space_id]
-    if not space.has_valve:
-        return False
-
-    outdoor = _outdoor_temperature_for_hour(local)
-    if outdoor >= 18.0:
-        return False  # no heating needed at all
-
-    hour = local.hour + local.minute / 60.0
-    active = local.weekday() < 5 and 7.0 <= hour < 21.0
-    health = _valve_health_for_space(space_id)
-
-    if health < -VALVE_STUCK_THRESHOLD:
-        return False  # stuck closed
-    if health > VALVE_STUCK_THRESHOLD:
-        return True  # stuck open (heats even at night / weekends)
-    return active and outdoor < 17.0
-
-
-def space_valve_open(space: SpaceConfig, building: BuildingConfig, when: datetime) -> bool:
-    """Whether the heating valve of ``space`` is open (demanding heat) at ``when``."""
-    return _valve_open_for(space.id, _floor_local(when))
-
-
-@lru_cache(maxsize=250_000)
-def _space_occupancy_for(space_id: str, local: datetime) -> int:
-    space = SPACES_BY_ID[space_id]
-    building = BUILDINGS_BY_ID[space.building_id]
-    building_occupancy = hour_occupancy(building, local)
-    spaces = SPACES_BY_BUILDING.get(building.id, [])
-    area_total = sum(item.area_m2 for item in spaces) or 1.0
-    share = space.area_m2 / area_total
-    jitter = 1.0 + _jitter("space-occ", space_id, _hour_key(local), amplitude=0.30)
-    return max(0, round(building_occupancy * share * jitter))
-
-
-def space_occupancy(building: BuildingConfig, space: SpaceConfig, when: datetime) -> int:
-    """Approximate number of people in ``space`` (building occupancy by area)."""
-    return _space_occupancy_for(space.id, _floor_local(when))
-
-
-def building_space_occupancy(building: BuildingConfig, when: datetime) -> dict[str, int]:
-    """Occupancy of every space of ``building`` at ``when`` (computed once)."""
-    local = _floor_local(when)
-    return {
-        space.id: _space_occupancy_for(space.id, local)
-        for space in SPACES_BY_BUILDING.get(building.id, [])
-    }
-
-
-@lru_cache(maxsize=250_000)
-def _space_temperature_for(space_id: str, local: datetime) -> float:
-    space = SPACES_BY_ID[space_id]
-    building = BUILDINGS_BY_ID[space.building_id]
-    outdoor = _outdoor_temperature_for_hour(local)
-    occupancy = _space_occupancy_for(space_id, local)
-    occupancy_factor = min(1.0, occupancy / 15.0)
-
-    if _valve_open_for(space_id, local):
-        base = building.setpoint_c + 0.35 + 0.9 * occupancy_factor
-    elif outdoor >= 18.0:
-        base = 21.5 + 0.55 * (outdoor - 18.0)
-    elif _valve_open_for(space_id, local - timedelta(hours=1)):
-        base = 18.2 + 0.25 * outdoor + 0.5 * occupancy_factor  # recently heated
-    else:
-        base = 15.0 + 0.30 * outdoor + 0.6 * occupancy_factor  # cold room
-
-    noise = 0.5 * _jitter("space-temp", space_id, _hour_key(local), amplitude=1.0)
-    return round(base + noise, 1)
-
-
-def space_temperature(
-    building: BuildingConfig, space: SpaceConfig, when: datetime, occupancy: int
-) -> float:
-    """Indoor temperature of ``space`` (°C) from valve state, weather and occupancy.
-
-    ``occupancy`` is accepted for readability at the call site but recomputed
-    internally so the result can be cached per (space, hour).
-    """
-    return _space_temperature_for(space.id, _floor_local(when))
-
-
-def hour_gas_kwh(building: BuildingConfig, when: datetime) -> float:
-    """Gas consumed by the boiler(s) of ``building`` during the hour of ``when``.
-
-    Proportional to the number of open heating valves and to the heating demand
-    (how far the outdoor temperature is below the base temperature).
-    """
-    return _hour_gas_cached(building.id, _floor_local(when))
-
-
-@lru_cache(maxsize=100_000)
-def _hour_gas_cached(building_id: str, local: datetime) -> float:
-    building = BUILDINGS_BY_ID[building_id]
-    spaces = SPACES_BY_BUILDING.get(building_id, [])
-    if not spaces:
-        return 0.0
-
-    open_count = sum(1 for space in spaces if _valve_open_for(space.id, local))
-    if open_count == 0:
-        return 0.0
-
-    outdoor = _outdoor_temperature_for_hour(local)
-    demand = max(0.0, 18.0 - outdoor)
-    ratio = open_count / len(spaces)
-    noise = 1.0 + _jitter("gas", building_id, _hour_key(local), amplitude=0.06)
-    return round(building.gas_base_kw * ratio * (demand / 8.0) * noise, 4)

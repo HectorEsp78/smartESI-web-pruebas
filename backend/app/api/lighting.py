@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, status
 
-from app.core.energy_map import BUILDINGS_BY_ID
+from app.core.buildings import BUILDINGS_BY_ID
 from app.schemas.lighting import (
     LightingBySpaceResponse,
     LightingConsumptionResponse,
@@ -8,7 +8,7 @@ from app.schemas.lighting import (
     LightingWasteResponse,
 )
 from app.services import lighting_service
-from app.services.energy_service import ALL_BUILDINGS
+from app.services.lighting_context import ALL_BUILDINGS
 
 router = APIRouter(prefix="/lighting", tags=["lighting"])
 

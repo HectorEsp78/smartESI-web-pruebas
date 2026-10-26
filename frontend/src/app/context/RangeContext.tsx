@@ -1,25 +1,25 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { updateDashboardUrl, parseDashboardUrlState } from '../lib/urlState';
-import { DEFAULT_ENERGY_RANGE } from '../types/energy';
-import type { EnergyRange } from '../types/energy';
+import { DEFAULT_DASHBOARD_RANGE } from '../types/range';
+import type { DashboardRange } from '../types/range';
 
 interface RangeContextValue {
-  range: EnergyRange;
-  setRange: (range: EnergyRange) => void;
+  range: DashboardRange;
+  setRange: (range: DashboardRange) => void;
 }
 
 const RangeContext = createContext<RangeContextValue | null>(null);
 
-function initialRange(): EnergyRange {
-  if (typeof window === 'undefined') return DEFAULT_ENERGY_RANGE;
+function initialRange(): DashboardRange {
+  if (typeof window === 'undefined') return DEFAULT_DASHBOARD_RANGE;
   return parseDashboardUrlState(window.location.search).range;
 }
 
 export function RangeProvider({ children }: { children: ReactNode }) {
-  const [range, setRangeState] = useState<EnergyRange>(initialRange);
+  const [range, setRangeState] = useState<DashboardRange>(initialRange);
 
-  const setRange = useCallback((nextRange: EnergyRange) => {
+  const setRange = useCallback((nextRange: DashboardRange) => {
     setRangeState(nextRange);
     updateDashboardUrl({ range: nextRange });
   }, []);

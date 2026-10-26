@@ -11,11 +11,9 @@ from unittest.mock import AsyncMock, patch
 
 from app.core.clock import local_tz
 from app.db.database_data import (
-    SITE_ENERGY_KEY,
-    average_series,
     cumulative_to_hourly,
-    load_hourly_energy,
     load_hourly_occupancy,
+    load_hourly_statistics,
     net_occupancy,
     parse_counter_value,
 )
@@ -81,8 +79,8 @@ class CumulativeToHourlyTest(unittest.TestCase):
         self.assertAlmostEqual(sum(dropped.values()), 0.0, places=3)
 
 
-class EnergyLoaderTest(unittest.IsolatedAsyncioTestCase):
-    async def test_site_meter_is_a_separate_series(self):
+class StatisticsLoaderTest(unittest.IsolatedAsyncioTestCase):
+    async def test_statistics_are_keyed_by_the_caller_key(self):
         rows = [
             ("sensor.cuadro_general", _hour(1, 9), 100.0),
             ("sensor.cuadro_general", _hour(1, 10), 150.0),
@@ -96,16 +94,22 @@ class EnergyLoaderTest(unittest.IsolatedAsyncioTestCase):
             "app.db.database_data.repository.fetch_statistics_sums",
             new=AsyncMock(return_value=rows),
         ):
-            data = await load_hourly_energy(
-                None, ["FerminCaballero"], start, end, include_site=True
+            data = await load_hourly_statistics(
+                None,
+                {
+                    "sensor.cuadro_general": "site",
+                    "sensor.edificio_a": "ModuloA",
+                },
+                start,
+                end,
             )
 
-        self.assertIn(SITE_ENERGY_KEY, data)
-        self.assertIn("FerminCaballero", data)
+        self.assertIn("site", data)
+        self.assertIn("ModuloA", data)
         # 10:00 UTC = 11:00 local in winter; the delta closes at that hour.
         hour = datetime(2026, 1, 1, 11, 0, tzinfo=local_tz())
-        self.assertAlmostEqual(data[SITE_ENERGY_KEY][hour], 50.0, places=3)
-        self.assertAlmostEqual(data["FerminCaballero"][hour], 2.0, places=3)
+        self.assertAlmostEqual(data["site"][hour], 50.0, places=3)
+        self.assertAlmostEqual(data["ModuloA"][hour], 2.0, places=3)
 
 
 class CounterValueTest(unittest.TestCase):
@@ -174,17 +178,6 @@ class OccupancyLoaderTest(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertNotIn("FerminCaballero", occupancy)
-
-
-class AverageSeriesTest(unittest.TestCase):
-    def test_only_hours_present_in_some_series_are_returned(self):
-        a = {_hour(1, 0): 20.0, _hour(1, 1): 22.0}
-        b = {_hour(1, 0): 24.0}
-
-        averaged = average_series([a, b])
-        self.assertEqual(set(averaged), set(a))
-        self.assertAlmostEqual(averaged[_hour(1, 0)], 22.0)
-        self.assertAlmostEqual(averaged[_hour(1, 1)], 22.0)
 
 
 if __name__ == "__main__":

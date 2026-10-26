@@ -1,26 +1,11 @@
-"""Static catalogue of buildings and metered spaces used by the stats module.
+"""Static catalogue of buildings and spaces used by the statistics module.
 
-This is the *placeholder* equivalent of the real ``sensor_map.py`` from the main
-Smart ESI project. Names and capacities are taken from the real installation so
-the synthetic data looks familiar, but the energy figures are simulated until
-``DATA_SOURCE=database`` is enabled and a real mapping is wired in.
+The catalogue is shared by the Electricity mock generator and the Lighting
+charts. Real electricity data comes from the Home Assistant recorder; the
+catalogue only supplies names, capacities and the synthetic load model.
 
-Each building also declares the data needed by the climate/lighting charts:
-
-- ``setpoint_c``  heating comfort setpoint (°C) used by the valve/temperature model.
-- ``gas_base_kw`` nominal boiler gas input (kW) when every heating valve is open.
-
-Each space declares:
-
-- ``area_m2``     useful floor area, used for the kWh/m² efficiency ratio and to
-                  distribute the building occupancy across its rooms.
-- ``lighting_kw`` installed lighting power, used to split the electrical
-  consumption between lighting (luminarias) and the rest of the loads.
-- ``has_valve``   whether the space has a heating solenoid valve (electroválvula).
-
-To add a space, add an entry to ``SPACES`` with the building it belongs to and a
-``weight`` (its share, ~0..1, of the building's base consumption). Weights do not
-need to be exact: the service normalises them per building.
+Each building declares its nominal electrical load. Each space declares its
+useful area, installed lighting power and its share of the building load.
 """
 
 from dataclasses import dataclass
@@ -33,9 +18,6 @@ class BuildingConfig:
     max_capacity: int
     # Baseline electrical load of the whole building (common areas included), in kW.
     base_kw: float
-    # Heating comfort setpoint (°C) and nominal boiler gas input (kW).
-    setpoint_c: float = 21.0
-    gas_base_kw: float = 40.0
 
 
 @dataclass(frozen=True)
@@ -46,10 +28,8 @@ class SpaceConfig:
     kind: str  # "CLASSROOM" | "LABORATORY" | "COMMON"
     weight: float
     area_m2: float = 60.0
-    # Installed lighting power in kW (used to split electricity into luminarias + rest).
+    # Installed lighting power in kW (used to split electricity into lighting + rest).
     lighting_kw: float = 0.6
-    # Whether this space has a heating solenoid valve (electroválvula).
-    has_valve: bool = True
 
 
 BUILDINGS: tuple[BuildingConfig, ...] = (
@@ -58,16 +38,12 @@ BUILDINGS: tuple[BuildingConfig, ...] = (
         label="Edificio Fermín Caballero",
         max_capacity=300,
         base_kw=22.0,
-        setpoint_c=21.0,
-        gas_base_kw=55.0,
     ),
     BuildingConfig(
         id="ModuloB",
         label="Módulo B",
         max_capacity=160,
         base_kw=12.0,
-        setpoint_c=21.0,
-        gas_base_kw=28.0,
     ),
 )
 
@@ -103,22 +79,11 @@ SPACES: tuple[SpaceConfig, ...] = (
     SpaceConfig("MonicoSanchez", "Mónico Sánchez", "ModuloB", "COMMON", 0.25, 140.0, 1.25),
 )
 
-BUILDINGS_BY_ID: dict[str, BuildingConfig] = {b.id: b for b in BUILDINGS}
+BUILDINGS_BY_ID: dict[str, BuildingConfig] = {building.id: building for building in BUILDINGS}
 
 SPACES_BY_BUILDING: dict[str, list[SpaceConfig]] = {
     building.id: [space for space in SPACES if space.building_id == building.id]
     for building in BUILDINGS
 }
 
-SPACES_BY_ID: dict[str, SpaceConfig] = {s.id: s for s in SPACES}
-
-# Installed lighting power per building (kW) and total useful area (m²).
-BUILDINGS_LIGHTING_KW: dict[str, float] = {
-    building.id: sum(space.lighting_kw for space in SPACES_BY_BUILDING[building.id])
-    for building in BUILDINGS
-}
-
-BUILDINGS_AREA_M2: dict[str, float] = {
-    building.id: sum(space.area_m2 for space in SPACES_BY_BUILDING[building.id])
-    for building in BUILDINGS
-}
+SPACES_BY_ID: dict[str, SpaceConfig] = {space.id: space for space in SPACES}

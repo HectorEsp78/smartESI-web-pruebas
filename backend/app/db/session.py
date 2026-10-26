@@ -5,7 +5,7 @@ requires installing the ``database`` extra::
 
     pip install -e ".[database]"
 
-In the default ``mock`` mode it is never imported, so the prototype runs without
+In ``mock`` mode it is never imported, so the prototype runs without
 SQLAlchemy / a database driver installed.
 """
 
