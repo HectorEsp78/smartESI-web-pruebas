@@ -3,12 +3,8 @@ import { Header } from '../components/Header';
 import { RangeProvider } from '../context/RangeContext';
 import { SectionHeading } from '../components/ui/SectionHeading';
 import { OverviewSection } from '../components/stats/OverviewSection';
-import { EnergyConsumptionChart } from '../components/stats/EnergyConsumptionChart';
-import { EnergyByBuildingChart } from '../components/stats/EnergyByBuildingChart';
 import { OccupancyAirQualityChart } from '../components/stats/OccupancyAirQualityChart';
-import { EnergyBreakdownChart } from '../components/stats/electricity/EnergyBreakdownChart';
-import { EnergyCompareChart } from '../components/stats/electricity/EnergyCompareChart';
-import { EnergyEfficiencyChart } from '../components/stats/electricity/EnergyEfficiencyChart';
+import { ElectricityDashboard } from '../components/stats/electricity/ElectricityDashboard';
 import { LightingConsumptionChart } from '../components/stats/lighting/LightingConsumptionChart';
 import { LightingBySpaceChart } from '../components/stats/lighting/LightingBySpaceChart';
 import { LightingWasteChart } from '../components/stats/lighting/LightingWasteChart';
@@ -29,7 +25,7 @@ const TAB_HEADING: Record<DashboardTabId, { title: string; subtitle: string }> =
   },
   electricidad: {
     title: 'ELECTRICIDAD',
-    subtitle: 'Consumo, carga base, comparativa con el periodo anterior y eficiencia por superficie.',
+    subtitle: 'Consumo o coste por edificio y por cuadros de planta, comparativa de periodos y base de centro cerrado.',
   },
   iluminacion: {
     title: 'ILUMINACIÓN',
@@ -52,15 +48,7 @@ const TAB_HEADING: Record<DashboardTabId, { title: string; subtitle: string }> =
 function TabContent({ tab }: { tab: DashboardTabId }) {
   switch (tab) {
     case 'electricidad':
-      return (
-        <div className="space-y-6">
-          <EnergyConsumptionChart />
-          <EnergyBreakdownChart />
-          <EnergyCompareChart />
-          <EnergyEfficiencyChart />
-          <EnergyByBuildingChart />
-        </div>
-      );
+      return <ElectricityDashboard />;
     case 'iluminacion':
       return (
         <div className="space-y-6">

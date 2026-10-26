@@ -12,6 +12,30 @@ const BUILDING_COLORS: Record<string, string> = {
   ModuloB: '#1f6f9a',
 };
 
+// Electricity uses its own building order/colours so the shared building
+// palette (and therefore the other tabs) stays unchanged.
+export const ELECTRICITY_BUILDING_COLORS: Record<string, string> = {
+  ModuloA: '#cf6c2e',
+  ModuloB: '#1f6f9a',
+  FerminCaballero: '#0497d7',
+};
+
+// Enough distinct colours for the nine Fermín sectors (eight floor panels plus
+// the CPD). The neutral grey is reserved for the "No desglosado" segment.
+export const SECTOR_COLORS = [
+  '#0497d7',
+  '#1f6f9a',
+  '#cf6c2e',
+  '#2b8b57',
+  '#b30139',
+  '#7c3aed',
+  '#0891b2',
+  '#4d7c0f',
+  '#be123c',
+];
+
+export const UNMETERED_COLOR = '#94a3b8';
+
 export function buildingColor(id: string, index = 0): string {
   return BUILDING_COLORS[id] ?? SERIES_COLORS[index % SERIES_COLORS.length];
 }

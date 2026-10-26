@@ -29,7 +29,7 @@ El panel se organiza en **seis pestañas**. Cada una agrupa varias gráficas de 
 | Pestaña | Qué muestra | Endpoints | Componentes |
 | ------- | ----------- | --------- | ----------- |
 | Resumen | KPIs de cabecera | (reutiliza los demás) | `OverviewSection` |
-| Electricidad | Consumo, desglose, comparativa, eficiencia y por edificio | `/energy/consumption`, `/energy/breakdown`, `/energy/compare`, `/energy/efficiency`, `/energy/by-building` | `EnergyConsumptionChart`, `EnergyBreakdownChart`, `EnergyCompareChart`, `EnergyEfficiencyChart`, `EnergyByBuildingChart` |
+| Electricidad | Fechas propias, KPIs, reparto por edificio, sectores de Fermín y comparativa de dos periodos | `/energy/electricity`, `/energy/electricity/compare`, `/energy/electricity/meta` | `ElectricityDashboard`, `ElectricityFilters`, `ElectricitySummary`, `ElectricityBuildingsChart`, `ElectricitySectorsChart`, `ElectricityComparisonChart` |
 | Iluminación | Luminarias frente a luz natural y despilfarro | `/lighting/consumption`, `/lighting/by-space`, `/lighting/waste` | `LightingConsumptionChart`, `LightingBySpaceChart`, `LightingWasteChart` |
 | Climatización y gas | Gas/grados-día, electroválvulas y aulas vacías | `/climate/gas`, `/climate/valves`, `/climate/empty-spaces` | `GasConsumptionChart`, `ValvesTemperatureChart`, `EmptySpacesHeatingChart` |
 | Ocupación y aire | Cruce ocupación ↔ CO₂ | `/correlation/occupancy-air-quality` | `OccupancyAirQualityChart` |
@@ -42,12 +42,13 @@ smartesi-stats/
 ├── backend/                    API FastAPI (Python)
 │   ├── app/
 │   │   ├── main.py             App, CORS, TrustedHost, health checks y handlers de error
-│   │   ├── api/                Routers: energy, lighting, climate, decisions, correlation, meta
+│   │   ├── api/                Routers: energy, electricity, lighting, climate, decisions, correlation, meta
 │   │   ├── core/
 │   │   │   ├── config.py       Ajustes (.env) — DATA_SOURCE y factores de conversión
 │   │   │   ├── clock.py        Utilidades de tiempo (UTC vs. hora local Europe/Madrid)
 │   │   │   ├── cache.py        Caché TTL en memoria para las series agregadas
-│   │   │   └── energy_map.py   Catálogo de edificios y espacios (+ área y luminarias)
+│   │   │   ├── energy_map.py   Catálogo general de edificios y espacios (+ área y luminarias)
+│   │   │   └── electricity_map.py  Mapa de los 3 edificios y los cuadros/CPD de Electricidad
 │   │   ├── db/                 Acceso a la BD real (solo DATA_SOURCE=database)
 │   │   │   ├── session.py          Sesión SQLAlchemy async + TLS + time zone UTC
 │   │   │   ├── entity_map.py       Entidad de HA ↔ edificio/espacio
@@ -58,7 +59,8 @@ smartesi-stats/
 │   │   └── services/
 │   │       ├── mock_data.py        Generador determinista de datos sintéticos
 │   │       ├── stats.py            Estadística descriptiva y regresión
-│   │       ├── energy_service.py   Consumo, desglose, comparativa y eficiencia
+│   │       ├── energy_service.py   Consumo, desglose, comparativa y eficiencia (endpoints legacy)
+│   │       ├── electricity_service.py  Fechas absolutas, edificios, sectores, base y comparativa
 │   │       ├── lighting_service.py Iluminación (luminarias y despilfarro)
 │   │       ├── climate_service.py  Gas, grados-día, válvulas y aulas vacías
 │   │       ├── decisions_service.py Ranking de oportunidades de ahorro
@@ -68,12 +70,12 @@ smartesi-stats/
 │   └── src/
 │       ├── app/
 │       │   ├── api/            fetch tipado + baseUrl (VITE_API_BASE_URL opcional)
-│       │   ├── context/        RangeContext: periodo global de todas las gráficas
-│       │   ├── hooks/          useBuildings, useEnergy*, useLighting, useClimate,
-│       │   │                   useDecisions, useOccupancyAirQuality
+│       │   ├── context/        RangeContext: periodo global de las pestañas no migradas
+│       │   ├── hooks/          useElectricity*, useBuildings, useEnergy*, useLighting,
+│       │   │                   useClimate, useDecisions, useOccupancyAirQuality
 │       │   ├── components/     Header, ui/ y stats/ (con subcarpetas por dominio)
 │       │   ├── pages/          Stats.tsx (pestañas), NotFound.tsx
-│       │   ├── lib/            format, chartTheme, sections
+│       │   ├── lib/            format, chartTheme, sections, electricity
 │       │   └── types/          DTOs de la API en snake_case
 │       ├── assets/             Logos y banner (reutilizados del proyecto original)
 │       └── styles/             theme.css, tailwind.css, index.css
@@ -88,6 +90,9 @@ Prefijo común: `/api/v1`.
 | Método | Ruta | Parámetros | Devuelve |
 | ------ | ---- | ---------- | -------- |
 | GET | `/meta/buildings` | — | Edificios (id, label, aforo, área, luminarias, consigna) y espacios (id, label, edificio, tipo, área, luminarias, válvula). |
+| GET | `/energy/electricity/meta` | — | Edificios, sectores, inicio de datos, precio y origen (`mock`/`database`). |
+| GET | `/energy/electricity` | `start`, `end`, `granularity=day\|week\|month\|year`, `metric=kwh\|cost`, `building=all\|<id>`, `sector` | Serie, KPIs, tres edificios, sectores de Fermín, cobertura y base de centro cerrado. |
+| GET | `/energy/electricity/compare` | `start_a`, `end_a`, `start_b`, `end_b`, granularidad, métrica y ámbito | Dos series alineadas, KPIs por periodo, `delta_pct` y base común. |
 | GET | `/energy/consumption` | `range`, `building=all\|<id>`, `metric=kwh\|cost\|co2` | `series` (timestamp, value), `total`, `average`, `peak`, `unit`, `granularity`. |
 | GET | `/energy/by-building` | `range`, `metric` | `total` del cuadro general, `submetered_total`, `unmetered_total`, `coverage`, y `share` por edificio + espacio. |
 | GET | `/energy/breakdown` | `range`, `building` | `series` (base, activity, lighting, other), totales y cuotas de carga base e iluminación. |
@@ -104,6 +109,10 @@ Prefijo común: `/api/v1`.
 | GET | `/health/live` | — | Estado y `data_source` actual. |
 | GET | `/health/ready` | — | Estado de las dependencias. |
 
+> Los endpoints `/energy/consumption`, `/energy/by-building`, `/energy/breakdown`,
+> `/energy/compare` y `/energy/efficiency` siguen disponibles para las pestañas aún no migradas.
+> La pestaña de Electricidad usa exclusivamente los tres endpoints `/energy/electricity...`.
+
 Rangos admitidos y su granularidad:
 
 | `range` | Periodo | Series temporales | Dispersión (correlación) |
@@ -115,10 +124,13 @@ Rangos admitidos y su granularidad:
 
 ## Decisiones de diseño
 
+- **Pestaña de Electricidad con fechas propias**: no usa el periodo global de la cabecera. El
+  resto de pestañas mantiene `RangeContext` hasta que se migren.
 - **Datos deterministas**: el generador siembra su aleatoriedad con un hash de (edificio/espacio +
   hora), de modo que una misma consulta devuelve siempre el mismo valor (estable y testeable).
 - **Periodo global en el frontend**: el rango vive en un contexto (`RangeContext`) y lo comparten la
-  cabecera y todas las gráficas; edificio y métrica se eligen por gráfica.
+  cabecera y las pestañas aún no migradas; edificio y métrica se eligen por gráfica. Electricidad
+  usa un rango absoluto `start`–`end` propio.
 - **Caché TTL en backend** (`STATS_CACHE_TTL_SECONDS`, 30 s por defecto) sobre las series agregadas.
 - **`placeholderData` en el frontend**: al cambiar de rango se siguen mostrando los datos
   anteriores mientras llegan los nuevos (sin parpadeo).

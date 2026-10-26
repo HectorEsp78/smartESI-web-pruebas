@@ -47,17 +47,19 @@ export function Header({ activeTab, onSelectTab: onSelectTabProp }: HeaderProps)
             <div className="hidden max-w-sm border-l border-slate-200 bg-white/70 px-4 py-2 text-right text-xs font-semibold uppercase tracking-[0.18em] text-slate-500 md:block">
               Estadísticas para la toma de decisiones
             </div>
-            <div className="flex items-center gap-2 rounded-sm border border-slate-200 bg-white/90 px-3 py-2">
-              <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
-                Periodo
-              </span>
-              <RangeSelector
-                options={RANGE_OPTIONS}
-                value={range}
-                onChange={setRange}
-                ariaLabel="Periodo de todas las gráficas"
-              />
-            </div>
+            {activeTab !== 'electricidad' && (
+              <div className="flex items-center gap-2 rounded-sm border border-slate-200 bg-white/90 px-3 py-2">
+                <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">
+                  Periodo
+                </span>
+                <RangeSelector
+                  options={RANGE_OPTIONS}
+                  value={range}
+                  onChange={setRange}
+                  ariaLabel="Periodo de todas las gráficas"
+                />
+              </div>
+            )}
           </div>
         </div>
       </div>

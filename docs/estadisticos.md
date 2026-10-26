@@ -8,12 +8,14 @@ variables para tomar decisiones** sobre el gasto eléctrico y de gas.
 - Cómo se pintan estos estadísticos en la web está en [`componentes.md`](componentes.md) y
   [`graficas.md`](graficas.md).
 
-> **Origen (modo `DATA_SOURCE=database`)**: la energía horaria por edificio, el gas del centro, los
-> grados-día, las temperaturas (exterior e interior por aula), la humedad, la ocupación por edificio
-> (contadores de entrada/salida) y el CO₂ de A11/A12/A21/A22 son **reales** (BD de Home Assistant,
-> solo `SELECT`). Las **electroválvulas**, el reparto de ocupación por aula y la iluminación siguen
-> siendo sintéticos, así que los estadísticos que dependen de ellos (estado de válvulas, gas en
-> aulas vacías y luz sin ocupación) son estimaciones. Detalle y estado por estadístico en
+> **Origen (modo `DATA_SOURCE=database`)**: la energía horaria del centro, Módulo A, Módulo B y los
+> cuadros de Fermín, el gas del centro, los grados-día, las temperaturas (exterior e interior por
+> aula), la humedad, la ocupación por edificio (contadores de entrada/salida) y el CO₂ de
+> A11/A12/A21/A22 son **reales** (BD de Home Assistant, solo `SELECT`). Fermín Caballero se deriva
+> como `Cuadro General − Módulo A − Módulo B`; los cuadros de planta y el CPD son parciales. Las
+> **electroválvulas**, el reparto de ocupación por aula y la iluminación siguen siendo sintéticos, así
+> que los estadísticos que dependen de ellos (estado de válvulas, gas en aulas vacías y luz sin
+> ocupación) son estimaciones. Detalle y estado por estadístico en
 > [`datos.md`](datos.md#41-estado-por-estadístico).
 
 ---
@@ -38,31 +40,32 @@ varias de las gráficas de decisión.
 
 ---
 
-## 2. Los ocho cruces con intención de decisión
+## 2. Los cruces con intención de decisión
 
 Cada cruce se implementa en un servicio, expone un endpoint y alimenta una o varias gráficas.
 
-### 2.1 Consumo frente a ocupación y superficie — *eficiencia*
+### 2.1 Reparto por edificio y ámbito — *reparto*
 
-- **Endpoint:** `GET /api/v1/energy/efficiency` · **Servicio:** `energy_service.build_efficiency`
-- **Cruza:** electricidad (kWh) ↔ superficie (m²) ↔ ocupación (personas·hora).
-- **Cálculo:** por edificio y por espacio, `kWh/m² = total / area` y
-  `kWh/persona·hora = total / (personas·hora)`. La ocupación del espacio se reparte por superficie.
-  El total usa el cuadro general; el desglose por edificio/espacio usa los subcontadores A/B y la
-  respuesta indica su `coverage` (en la UI, el resto aparece como «No desglosado»).
-- **Decisión:** detectar espacios **ineficientes** (mucho kWh por m²) que merecen revisión, y
-  comparar edificios con criterios homogéneos.
-- **Gráfica:** `EnergyEfficiencyChart` (pestaña *Electricidad*).
+- **Endpoint:** `GET /api/v1/energy/electricity` · **Servicio:** `electricity_service.build_electricity`
+- **Cruza:** total del centro ↔ Módulo A ↔ Módulo B ↔ Fermín Caballero ↔ sectores de Fermín.
+- **Cálculo:** para un rango de fechas absoluto (`start`–`end`) y una granularidad
+  día/semana/mes/año, suma la energía horaria de cada ámbito. El total del centro es
+  `sensor.cuadro_general`; Módulo A y Módulo B son contadores directos; Fermín se deriva como
+  `Cuadro General − Módulo A − Módulo B`. Devuelve total, media, mínimo, máximo y base.
+- **Métrica:** consumo (kWh) o coste (`kWh · 0,20 €/kWh`).
+- **Decisión:** saber qué edificio concentra el gasto y cómo evoluciona en el intervalo elegido.
+- **Gráfica:** `ElectricityBuildingsChart` (pestaña *Electricidad*).
 
-### 2.2 Carga base frente a actividad — *horario*
+### 2.2 Base de centro cerrado — *horario*
 
-- **Endpoint:** `GET /api/v1/energy/breakdown` · **Servicio:** `energy_service.build_breakdown`
-- **Cruza:** consumo eléctrico ↔ franja horaria.
-- **Cálculo:** `base` = consumo **fuera** de horario laborable (noches y fines de semana);
-  `activity` = consumo en horario laborable (L–V, 7–21 h). `base + activity = total`.
-- **Decisión:** cuantificar el gasto **fuera de horario** (equipos en espera, climatización
-  desatendida), la palanca de ahorro más habitual.
-- **Gráfica:** `EnergyBreakdownChart` (pestaña *Electricidad*).
+- **Endpoint:** `GET /api/v1/energy/electricity` · **Servicio:** `electricity_service.build_electricity`
+- **Cruza:** consumo eléctrico ↔ horario de apertura.
+- **Cálculo:** se consideran horas cerradas las **noches de lunes a viernes (21:00–07:00)** y los
+  **fines de semana completos**. La base es la media de kWh/h en esas horas; para cada intervalo se
+  proyecta al número de horas del intervalo. Los festivos no se excluyen (limitación conocida).
+- **Decisión:** cuantificar el consumo de fondo y compararlo con la actividad real; si la base se
+  acerca al total, el margen de ahorro está en equipos que siguen encendidos sin actividad.
+- **Gráfica:** línea discontinua en `ElectricityBuildingsChart` y `ElectricityComparisonChart`.
 
 ### 2.3 Luz frente a luz natural y estacionalidad — *iluminación*
 
@@ -96,15 +99,17 @@ Cada cruce se implementa en un servicio, expone un endpoint y alimenta una o var
   válvulas y programaciones que se saltan el horario.
 - **Gráfica:** `EmptySpacesHeatingChart` (pestaña *Climatización y gas*).
 
-### 2.6 Interanual y tendencia — *evolución*
+### 2.6 Comparativa de dos periodos — *evolución*
 
-- **Endpoint:** `GET /api/v1/energy/compare` · **Servicio:** `energy_service.build_compare`
-- **Cruza:** periodo actual ↔ **periodo anterior equivalente**.
-- **Cálculo:** cada bucket se compara con el mismo intervalo desplazado 24 h / 7 días / 30 días /
-  12 meses según el rango. Devuelve `current`, `previous` y `delta_pct`.
-- **Decisión:** saber si el consumo **sube o baja** y cuánto; la tendencia interanual positiva se
-  convierte además en una oportunidad de ahorro (apartado 3).
-- **Gráfica:** `EnergyCompareChart` (pestaña *Electricidad*).
+- **Endpoint:** `GET /api/v1/energy/electricity/compare` · **Servicio:**
+  `electricity_service.build_electricity_compare`
+- **Cruza:** periodo A ↔ periodo B, ambos independientes.
+- **Cálculo:** se agregan los dos periodos con la misma granularidad y ámbito. Deben tener el mismo
+  número de intervalos; se alinean por índice y se devuelve `period_a`, `period_b`, `baseline` y
+  `delta_pct = (A − B) / B · 100`. La base común es la media de horas cerradas de ambos periodos.
+- **Decisión:** comparar años, meses o semanas completas (por ejemplo, 2026 frente a 2025) y separar
+  el efecto de la actividad del consumo de fondo.
+- **Gráfica:** `ElectricityComparisonChart` (pestaña *Electricidad*).
 
 ### 2.7 Electroválvulas frente a temperatura de aula — *calefacción*
 
@@ -127,6 +132,28 @@ Cada cruce se implementa en un servicio, expone un endpoint y alimenta una o var
   consignas), y estimar el coste de un invierno más o menos frío.
 - **Gráfica:** `GasConsumptionChart` (pestaña *Climatización y gas*).
 
+### 2.9 Sectores de Fermín y cobertura — *desglose parcial*
+
+- **Endpoint:** `GET /api/v1/energy/electricity` · **Servicio:** `electricity_service.build_electricity`
+- **Cruza:** total de Fermín ↔ cuadros de planta ↔ CPD.
+- **Cálculo:** suma los subcontadores `sensor.planta_*` y `sensor.sala_computacion`. Como no cubren
+  todo el edificio, devuelve `sectors_total`, `unmetered_total = Fermín − sectores` y
+  `sector_coverage = sectores / Fermín`. El cuadro E se marca `has_data=false` porque su suma
+  acumulada no se ha movido desde 2023.
+- **Decisión:** localizar los sectores que más pesan y detectar cuadros anómalos, sin confundir el
+  total del edificio con la suma de los subcontadores.
+- **Gráfica:** `ElectricitySectorsChart` (pestaña *Electricidad*).
+
+### 2.10 Eficiencia eléctrica por superficie — *legacy*
+
+- **Endpoint:** `GET /api/v1/energy/efficiency` · **Servicio:** `energy_service.build_efficiency`
+- **Cruza:** consumo eléctrico ↔ superficie ↔ ocupación.
+- **Cálculo:** kWh/m² y kWh/persona·hora a partir del total del centro y del reparto por
+  edificio/espacio. Sigue usando el mapeo antiguo de energía y ya no se muestra en la pestaña de
+  Electricidad; se conserva porque el panel de Decisiones lo reutiliza.
+- **Decisión:** detectar espacios con un consumo por m² muy por encima de la media.
+- **Gráfica:** `EnergyEfficiencyChart` (componente legacy, no visible en la nueva pestaña).
+
 ---
 
 ## 3. De los cruces a decisiones: el ranking de oportunidades
@@ -140,7 +167,7 @@ Cada cruce se implementa en un servicio, expone un endpoint y alimenta una o var
 | Apagar luminarias en espacios vacíos | 2.4 | Coste anualizado de la luz sin ocupación. |
 | No calentar espacios sin ocupación | 2.5 | Coste anualizado del gas sin ocupación. |
 | Reducir la carga base fuera de horario | 2.2 | 10 % de la carga base (factor prudente) · precio electricidad. |
-| Revisar el espacio con más kWh/m² | 2.1 | Exceso sobre la media por m² · precio electricidad. |
+| Revisar el espacio con más kWh/m² | 2.10 | Exceso sobre la media por m² · precio electricidad. |
 | Consumo eléctrico al alza | 2.6 | Diferencia interanual · precio electricidad. |
 
 Detalles de cálculo:
@@ -170,10 +197,9 @@ Quedan anotados en [`backlog.md`](backlog.md).
 
 | Dominio | Endpoint | Estadísticos principales |
 | ------- | -------- | ------------------------ |
-| Electricidad | `/energy/consumption`, `/energy/by-building` | total, media, pico, reparto por edificio/espacio. |
-| Electricidad | `/energy/breakdown` | carga base, actividad, luz, resto, cuotas. |
-| Electricidad | `/energy/compare` | actual, anterior, `delta_pct`. |
-| Electricidad | `/energy/efficiency` | kWh/m², kWh/persona·hora, media global. |
+| Electricidad (nueva) | `/energy/electricity` | total, media, mínimo, máximo, base, tres edificios, sectores y cobertura. |
+| Electricidad (nueva) | `/energy/electricity/compare` | dos periodos, `delta_pct`, base común. |
+| Electricidad (legacy) | `/energy/consumption`, `/energy/by-building`, `/energy/breakdown`, `/energy/compare`, `/energy/efficiency` | endpoints anteriores, aún disponibles para pestañas no migradas. |
 | Iluminación | `/lighting/consumption` | luz total, cuota, coste, CO₂, luz natural. |
 | Iluminación | `/lighting/by-space` | ranking por luminarias y cuota por edificio. |
 | Iluminación | `/lighting/waste` | luz sin ocupación, `%` despilfarro, €/año. |

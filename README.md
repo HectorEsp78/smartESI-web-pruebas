@@ -4,10 +4,12 @@ Módulo **independiente** de estadísticas para la página web de Smart ESI. Su 
 como banco de pruebas para las **nuevas gráficas orientadas a la toma de decisiones** antes de
 incorporarlas a la web pública.
 
-El panel se organiza en **seis pestañas** con un selector de **periodo global**:
+El panel se organiza en **seis pestañas**. La mayoría usa un selector de **periodo global**; la
+pestaña de **Electricidad** tiene fechas propias y agrupación temporal automática:
 
 - **Resumen** — KPIs del centro (electricidad, gas, aire y ahorro potencial).
-- **Electricidad** — consumo, carga base vs. actividad, comparativa interanual y eficiencia (kWh/m²).
+- **Electricidad** — rango de fechas propio, consumo o coste, reparto Módulo A / Módulo B / Fermín,
+  sectores de Fermín (cuadros de planta y CPD), comparativa de dos periodos y base de centro cerrado.
 - **Iluminación** — luminarias frente a luz natural y despilfarro con los espacios vacíos.
 - **Climatización y gas** — gas frente a grados-día, electroválvulas vs. temperatura y aulas vacías.
 - **Ocupación y aire** — cruce de ocupación con CO₂.
@@ -28,7 +30,10 @@ tocarlo:
 > **CO₂/aire**: energía, gas, grados-día, temperaturas, humedad, contadores de personas y cuatro
 > sondas de CO₂), y `DATA_SOURCE=mock` (por defecto) genera datos sintéticos para el resto de
 > pestañas y para poder ejecutar sin VPN ni base de datos. La iluminación sigue en mock porque aún
-> no hay un mapeo confirmado de sus controladores.
+> no hay un mapeo confirmado de sus controladores. En Electricidad, el total del centro es
+> `sensor.cuadro_general`; Módulo A y Módulo B son contadores directos; Fermín Caballero se deriva
+> como `Cuadro General − Módulo A − Módulo B`, y sus cuadros de planta/CPD se muestran como
+> subcontadores parciales con su cobertura.
 
 ## Puesta en marcha rápida
 

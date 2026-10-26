@@ -7,6 +7,9 @@ mientras no hay base de datos y **qué habría que cambiar** para usar la instal
 - Con `DATA_SOURCE=database` lee de la base de datos del *recorder* de Home Assistant **solo con
   `SELECT`**. Ya está implementado para **Electricidad**, **Climatización/gas**, **Ocupación** y
   **CO₂/aire**; la iluminación (y el reparto de ocupación por aula) sigue en sintético.
+- La pestaña nueva de **Electricidad** tiene su propio mapa en `core/electricity_map.py`. El resto
+  de pestañas aún no migradas (Resumen, Iluminación, etc.) sigue usando `core/energy_map.py` y el
+  mapa anterior de `db/entity_map.py`.
 - El **contrato de la API no cambia** entre ambos modos: los *schemas* Pydantic y el frontend son
   los mismos. Solo cambia la capa de datos que usa cada servicio.
 
@@ -14,9 +17,25 @@ mientras no hay base de datos y **qué habría que cambiar** para usar la instal
 
 ## 1. Catálogo de edificios y espacios
 
-Todo el inventario está en [`backend/app/core/energy_map.py`](../backend/app/core/energy_map.py).
+El inventario general está en [`backend/app/core/energy_map.py`](../backend/app/core/energy_map.py).
 Es el equivalente *placeholder* del `sensor_map.py` del proyecto original: los nombres y aforos son
 los reales, pero las magnitudes energéticas son simuladas.
+
+La pestaña de **Electricidad** usa además
+[`backend/app/core/electricity_map.py`](../backend/app/core/electricity_map.py), un catálogo
+independiente con los **tres edificios** de esta pestaña y sus **cuadros de planta/CPD**:
+
+| Edificio | Estadístico | Tipo |
+| -------- | ----------- | ---- |
+| Módulo A | `sensor.edificio_a` | Contador directo |
+| Módulo B | `sensor.edificio_b` | Contador directo |
+| Fermín Caballero | `sensor.cuadro_general − sensor.edificio_a − sensor.edificio_b` | Derivado |
+
+Los sectores de Fermín son `sensor.planta_baja_red_cuadro_d`, `sensor.planta_baja_cuadro_e`,
+`sensor.planta_primera_cuadro_f`, `sensor.planta_primera_cuadro_g`,
+`sensor.planta_primera_cuadro_h` (físicamente en Planta Segunda), `sensor.planta_segunda_cuadro_i`,
+`sensor.planta_tercera_cuadro_j`, `sensor.planta_tercera_cuadro_k` y `sensor.sala_computacion`
+(CPD). Son **subcontadores parciales**, no el total de Fermín.
 
 **Edificios** (`BUILDINGS`): un `BuildingConfig` por edificio.
 
@@ -44,7 +63,9 @@ Agregados derivados:
 | `has_valve` | Si el espacio tiene electroválvula de calefacción. |
 
 Añadir un edificio o espacio aquí actualiza solo `/api/v1/meta/buildings`, los selectores del
-frontend y todas las gráficas.
+frontend y todas las gráficas **del mapa general**. La pestaña de Electricidad se mantiene aparte:
+para añadir un edificio o un cuadro allí hay que editar `core/electricity_map.py` y el endpoint
+`/api/v1/energy/electricity/meta`.
 
 ---
 
@@ -116,6 +137,11 @@ La agregación temporal es común a todos los dominios:
 | `month` | últimos 30 días | 30 puntos **por día** |
 | `year` | últimos 12 meses | 12 puntos **por mes natural** |
 
+La pestaña nueva de **Electricidad** no usa esos rangos relativos: recibe `start` y `end`
+(`YYYY-MM-DD`, ambos inclusive) y agrupa por **día**, **semana** (lunes–domingo), **mes** o **año**
+natural. El primer y último intervalo pueden ser parciales si el rango no coincide con el inicio del
+periodo. La comparativa exige el mismo número de intervalos en los dos periodos.
+
 Conversión de métricas (electricidad): `cost = kWh · ENERGY_PRICE_EUR_PER_KWH`,
 `co2 = kWh · CO2_KG_PER_KWH`. El gas usa sus propios factores
 (`GAS_PRICE_EUR_PER_KWH`, `GAS_CO2_KG_PER_KWH`).
@@ -141,7 +167,10 @@ entidad → edificio/espacio se declara **explícitamente** en
 | Estadístico | Origen real | Estado |
 | ----------- | ----------- | ------ |
 | Electricidad del centro | `statistics.sum` de `sensor.cuadro_general` (kWh). Es el mismo contador del “cuadro general” de HA. | ✅ Real |
-| Electricidad por edificio | `statistics.sum` de `sensor.edificio_a` / `sensor.edificio_b` (kWh). Son **subcontadores parciales** (≈3–15 % del total), no los contadores generales de cada edificio. | ✅ Real (parcial) |
+| Electricidad Módulo A | `statistics.sum` de `sensor.edificio_a` (kWh). | ✅ Real |
+| Electricidad Módulo B | `statistics.sum` de `sensor.edificio_b` (kWh). | ✅ Real |
+| Electricidad Fermín Caballero | `sensor.cuadro_general − sensor.edificio_a − sensor.edificio_b`. No hay un contador único de Fermín. | ✅ Real (derivada) |
+| Sectores de Fermín | `statistics.sum` de los cuadros `sensor.planta_*` y `sensor.sala_computacion` (CPD). Cubren ≈30–38 % de Fermín. | ✅ Real (parcial) |
 | Gas del sitio | `statistics.sum` de `sensor.daily_gas` (m³ → kWh con `GAS_KWH_PER_M3`). Solo `building=all`. | ✅ Real |
 | Grados-día | `statistics.mean`/`states` de `sensor.temperatura_meteo` + `HEATING_BASE_TEMPERATURE_C`. | ✅ Real |
 | Temperatura interior por espacio | `statistics.mean`/`states` de `sensor.sensor_temperatura_aXX` y `sensor.temperatura_shellyN`. | ✅ Real |
@@ -151,13 +180,17 @@ entidad → edificio/espacio se declara **explícitamente** en
 | Electroválvulas | No existe entidad de válvula en la BD. | ⛔ Mock |
 | Iluminación | `light.controller1..7` y `sensor.sensor_luz_aXX` existen, pero falta confirmar el mapeo a espacios y la potencia por circuito. | ⛔ Mock |
 | CO₂ / aire | `air_quality.co2_3`, `co2_1`, `co2_2` y `co2_4` (A11, A12, A21, A22). El resto de espacios, mock. | ✅ Real (4 aulas) |
-| Eficiencia (kWh/persona·hora) | Total del cuadro general + ocupación real; el desglose por edificio/espacio usa los subcontadores A/B y se reparte por superficie. | ✅ Real (total) · ⚠️ Parcial (desglose) |
+| Eficiencia (kWh/persona·hora, endpoint legacy) | Total del cuadro general + ocupación real; el desglose por edificio/espacio usa los subcontadores A/B y se reparte por superficie. | ✅ Real (total) · ⚠️ Parcial (desglose) |
 
 > El **total eléctrico** sale de `sensor.cuadro_general`, igual que en el panel de energía de HA.
-> Los contadores `sensor.edificio_a` y `sensor.edificio_b` solo cubren una parte del consumo, así que
-> `/energy/by-building` y `/energy/efficiency` devuelven también `submetered_total`,
-> `unmetered_total` y `coverage`. La UI muestra el resto como **“No desglosado”** para que las barras
-> sumen el total real sin inventar un reparto por edificio.
+> La pestaña nueva de Electricidad reparte ese total en **Módulo A**, **Módulo B** y
+> **Fermín Caballero** (el resto). Los cuadros de planta y el CPD son subcontadores parciales de
+> Fermín: la API devuelve `sectors_total`, `unmetered_total` y `sector_coverage`, y la UI muestra el
+> resto como **“No desglosado”**. Nunca se reparte el consumo no medido entre los sectores.
+>
+> Las pestañas aún no migradas (Resumen, Iluminación, Climatización, etc.) siguen usando el mapa anterior de
+> `db/entity_map.py`, donde `sensor.edificio_a` se asociaba a Fermín Caballero. Esa asociación es la
+> que se corrige en el mapa nuevo de Electricidad; se irá sustituyendo al migrar el resto.
 >
 > El **gas** se sirve solo para el conjunto del centro porque en la instalación hay **un único
 > contador**. Al pedir un edificio concreto, el gas es `0` (la temperatura y los grados-día sí son
@@ -173,8 +206,9 @@ entidad → edificio/espacio se declara **explícitamente** en
 
 En [`backend/app/db/database_data.py`](../backend/app/db/database_data.py):
 
-- **Contadores (`statistics.sum`)**: la energía de una hora es la diferencia entre dos lecturas
-  acumuladas consecutivas. HA guarda el `sum` al **final** del periodo: la diferencia entre las filas
+- **Contadores (`statistics.sum`)**: `load_hourly_statistics` convierte cualquier conjunto de
+  estadísticos acumulados en series horarias y lo comparten los endpoints antiguos y Electricidad.
+  La energía de una hora es la diferencia entre dos lecturas acumuladas consecutivas. HA guarda el `sum` al **final** del periodo: la diferencia entre las filas
   de 10:00 y 11:00 es el consumo de 11:00–12:00 y se asigna a la hora **11:00** (la fila actual), no
   a la anterior. Es la misma convención del panel de energía de HA.
   - Los volcados de HA tras un corte (varios días planos y luego un salto) se **reparten** entre las
@@ -190,6 +224,9 @@ En [`backend/app/db/database_data.py`](../backend/app/db/database_data.py):
 
 ### 4.3 Pendiente
 
+- Migrar el resto de pestañas (Resumen, Iluminación, Climatización, etc.) al mapa nuevo de
+  edificios y al esquema de fechas absolutas, para que dejen de usar la asociación antigua
+  `edificio_a → Fermín Caballero`.
 - Mapear iluminación (`light.controller1..7`, `sensor.sensor_luz_aXX`) a edificios/espacios y
   obtener una medida de potencia o consumo por circuito; hasta entonces la pestaña sigue en mock.
 - Reparto real de la ocupación por aula (los contadores actuales son por edificio).

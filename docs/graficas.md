@@ -1,8 +1,9 @@
 # Gráficas
 
 Todas las gráficas son **interactivas**: tooltips al pasar el ratón y controles para cambiar el
-periodo (en la cabecera, global), el edificio y/o la métrica. Los colores siguen la identidad
-institucional (azul UCLM `#0497d7`, granate ESI `#b30139`, y verdes/naranjas para estados).
+periodo (global en la cabecera, salvo en Electricidad, que tiene fechas propias), el edificio y/o la
+métrica. Los colores siguen la identidad institucional (azul UCLM `#0497d7`, granate ESI `#b30139`,
+y verdes/naranjas para estados).
 
 El panel está organizado en **seis pestañas**. Aquí se resume **qué muestra cada gráfica y para qué
 decisión es útil**; el detalle de cómo está construida cada pieza está en
@@ -11,7 +12,7 @@ decisión es útil**; el detalle de cómo está construida cada pieza está en
 | Pestaña | Gráficas |
 | ------- | -------- |
 | Resumen | KPIs (`OverviewSection`). |
-| Electricidad | Consumo, desglose, comparativa, eficiencia, por edificio. |
+| Electricidad | Filtros propios, KPIs, gasto por edificio, sectores de Fermín y comparativa de periodos. |
 | Iluminación | Luz vs. natural, ranking por espacio, despilfarro. |
 | Climatización y gas | Gas/grados-día, válvulas, aulas vacías. |
 | Ocupación y aire | Ocupación ↔ CO₂. |
@@ -36,56 +37,93 @@ Seis tarjetas con indicadores clave del periodo seleccionado:
 
 ## 2. Electricidad
 
-### 2.1 Evolución del consumo
+La pestaña tiene **controles propios de fecha**; el selector global de periodo de la cabecera se
+oculta para no duplicar estados. Todo se calcula con un rango de fechas absoluto (`start`–`end`,
+ambos inclusive) y se puede ver en **consumo (kWh)** o **coste (€)** a **0,20 €/kWh**.
 
-**Componente:** `EnergyConsumptionChart` · **Endpoint:** `/energy/consumption`
+**Componentes:** `ElectricityDashboard`, `ElectricityFilters`, `ElectricitySummary`,
+`ElectricityBuildingsChart`, `ElectricitySectorsChart`, `ElectricityComparisonChart`.
+**Endpoints:** `/energy/electricity`, `/energy/electricity/compare`, `/energy/electricity/meta`.
 
-Gráfica de área con la evolución del consumo. **Controles:** edificio y métrica
-(`Consumo` kWh, `Coste` €, `Emisiones` kg CO₂). **KPIs:** total, media por periodo y pico (con su
-fecha).
+### 2.1 Filtros y KPIs
 
-**Decisiones:** detectar picos y su franja; comparar el gasto entre periodos; traducir kWh a euros o
-emisiones para justificar inversiones.
+**Componente:** `ElectricityFilters` + `ElectricitySummary`
 
-### 2.2 Carga base vs. actividad y luz vs. resto
+- **Fechas:** día inicial y día final, sin ventana horaria diaria. Los datos empiezan el
+  **22/12/2023**.
+- **Agrupación automática:** la interfaz elige el intervalo según la duración del rango: día hasta
+  31 días, semana hasta 120, mes hasta 3 años y año para rangos mayores. No hay selector «Agrupar
+  por». Las semanas se alinean de lunes a domingo y los meses y años son naturales; el primer y
+  último intervalo pueden ser parciales.
+- **Métrica:** consumo o coste.
+- **Ámbito:** todos los edificios, Módulo A, Módulo B o Fermín Caballero. En Fermín se puede elegir
+  además un sector concreto (cuadro de planta o CPD).
 
-**Componente:** `EnergyBreakdownChart` · **Endpoint:** `/energy/breakdown`
+Las tarjetas muestran **total**, **media por intervalo**, **mínimo**, **máximo**, **base fuera de
+horario** y **cobertura de los sectores** de Fermín.
 
-Dos gráficas de barras apiladas: **carga base** (fuera de horario) frente a **actividad**, y
-**luminarias** frente al **resto de cargas**. **KPIs:** cuota de carga base y cuota de iluminación.
+### 2.2 Reparto por edificio
 
-**Decisiones:** cuantificar el gasto en noches/fines de semana (equipos en espera, climatización
-desatendida) y cuánto peso tiene la iluminación.
+**Componente:** `ElectricityBuildingsChart` · **Endpoint:** `/energy/electricity`
 
-### 2.3 Comparativa con el periodo anterior
+Barras apiladas por intervalo con el gasto de **Módulo A**, **Módulo B** y **Fermín Caballero**, más
+una línea discontinua con la **base de centro cerrado**. Debajo, una tabla con total, media, mínimo,
+máximo y **% sobre el centro** de cada edificio.
 
-**Componente:** `EnergyCompareChart` · **Endpoint:** `/energy/compare`
+La reconciliación es explícita:
 
-Líneas del **periodo actual** frente al **periodo anterior equivalente**. **KPIs:** actual, anterior
-y variación (`delta_pct`).
+- `sensor.cuadro_general` es el total del centro.
+- `sensor.edificio_a` y `sensor.edificio_b` son los contadores directos de los módulos.
+- Fermín Caballero **no tiene un contador único**: se calcula como
+  `Cuadro General − Módulo A − Módulo B`.
 
-**Decisiones:** saber si el consumo sube o baja de un periodo a otro y cuánto.
+**Decisiones:** ver qué edificio concentra el gasto y comparar su evolución con la base de centro
+cerrado.
 
-### 2.4 Eficiencia por superficie y ocupación
+### 2.3 Sectores de Fermín Caballero
 
-**Componente:** `EnergyEfficiencyChart` · **Endpoint:** `/energy/efficiency`
+**Componente:** `ElectricitySectorsChart` · **Endpoint:** `/energy/electricity`
 
-Barras horizontales de **kWh/m²** por espacio (top) y tabla con kWh/persona·hora, coste y cuota.
-**KPIs:** consumo total, media por m² y espacio menos eficiente.
+Barras apiladas por intervalo con los **cuadros de planta** y el **CPD**, más una barra gris de
+**“No desglosado”**. La tabla muestra total, media, mínimo, máximo y **% sobre Fermín** de cada
+sector.
 
-**Decisiones:** detectar espacios anómalamente altos por metro cuadrado (equipos antiguos o mal uso).
+Los cuadros son **subcontadores parciales**: no suman el total de Fermín. La gráfica nunca reparte
+el resto entre los sectores; lo muestra aparte y publica la **cobertura medida**. En los datos
+actuales cubren aproximadamente el **30–38 %** de Fermín según el periodo. El cuadro E aparece como
+**sin datos** porque su suma acumulada no se ha movido desde 2023.
 
-### 2.5 Consumo por edificio y espacio
+**Decisiones:** localizar los sectores que más pesan y detectar cuadros con comportamiento anómalo,
+sin confundir el total del edificio con la suma de los subcontadores.
 
-**Componente:** `EnergyByBuildingChart` · **Endpoint:** `/energy/by-building`
+### 2.4 Comparativa de dos periodos
 
-Barras por edificio, barras horizontales (top de espacios) y tabla de detalle con el **% sobre el
-total**. Comparte los selectores de edificio y métrica. El total procede de `sensor.cuadro_general`;
-los contadores A/B son parciales, así que la gráfica añade **“No desglosado”** y muestra el
-porcentaje de cobertura (`coverage`) para que el reparto sume el total real.
+**Componente:** `ElectricityComparisonChart` · **Endpoint:** `/energy/electricity/compare`
 
-**Decisiones:** repartir el esfuerzo de eficiencia donde más impacto tiene y detectar espacios fuera
-de lo normal.
+Dos periodos **independientes** (A y B) en la misma gráfica, con dos líneas de colores distintos y
+una línea discontinua de **base de centro cerrado**. Se comparan con la misma granularidad y el mismo
+ámbito que los filtros. Los dos periodos deben tener el mismo número de intervalos; si no, la API
+devuelve un error explicativo.
+
+**KPIs:** total del periodo A, total del periodo B, variación A−B y base/hora. Si las duraciones en
+días no coinciden (por ejemplo, enero frente a febrero con granularidad mensual), se muestra un aviso
+de que la comparación de totales es informativa.
+
+**Decisiones:** comparar años, meses o semanas completas (por ejemplo, 2026 frente a 2025) y separar
+el efecto de la actividad del consumo de fondo.
+
+### 2.5 Base de centro cerrado
+
+La base se calcula con las horas en las que la Escuela está **cerrada y sin actividad**:
+
+- **Lunes–viernes:** de 21:00 a 07:00.
+- **Sábados y domingos:** todo el día.
+- **Festivos:** no se excluyen actualmente; se documenta como limitación.
+
+Para cada intervalo se proyecta la media horaria de esas horas al número de horas del intervalo. En
+la gráfica de edificios se suma la base de los tres edificios; en la comparativa se usa la media
+conjunta de las horas cerradas de ambos periodos. Así la línea representa el consumo esperado **si el
+centro estuviera cerrado** y permite ver cuánto se separa la actividad real.
 
 ---
 

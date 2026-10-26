@@ -23,8 +23,8 @@ api/ (routers)  →  services/ (lógica + agregación)  →  core/ (config, ener
                                     ↘  db/ (solo DATA_SOURCE=database: modelos HA + repositorio)
 ```
 
-- **`api/`**: un router por dominio (`energy.py`, `lighting.py`, `climate.py`, `decisions.py`,
-  `correlation.py`, `meta.py`). Valida el edificio y delega en el servicio; no contiene lógica de
+- **`api/`**: un router por dominio (`energy.py`, `electricity.py`, `lighting.py`, `climate.py`,
+  `decisions.py`, `correlation.py`, `meta.py`). Valida el edificio y delega en el servicio; no contiene lógica de
   negocio. Todos se registran bajo `/api/v1` en `main.py`. Son `async` para poder esperar a la BD.
 - **`services/`**:
   - `mock_data.py` genera los valores base por hora (energía, ocupación, CO₂, temperatura, humedad,
@@ -34,6 +34,9 @@ api/ (routers)  →  services/ (lógica + agregación)  →  core/ (config, ener
   - `energy_service.py` agrega consumo, por edificio, desglose (carga base/actividad/luz), comparativa
     con el periodo anterior y eficiencia (kWh/m² y kWh/persona·hora). En modo BD, la energía horaria
     y la ocupación de cada edificio salen del repositorio; el reparto por espacio sigue en mock.
+  - `electricity_service.py` implementa la pestaña nueva de Electricidad: rangos de fechas
+    absolutos, granularidad día/semana/mes/año, métrica consumo/coste, tres edificios, sectores
+    parciales de Fermín, base de centro cerrado y comparativa de dos periodos.
   - `lighting_service.py` separa luminarias del resto, reparte por espacio y calcula el despilfarro
     (luz sin ocupación) con su €/año. La energía sigue siendo sintética, pero la ocupación es real
     en modo BD.
@@ -44,7 +47,8 @@ api/ (routers)  →  services/ (lógica + agregación)  →  core/ (config, ener
   - `decisions_service.py` traduce los cruces anteriores a un **ranking de oportunidades** con €/año.
   - `correlation_service.py` cruza ocupación (real por edificio) y CO₂ (real en A11/A12/A21/A22).
   - Todos los servicios exponen `clear_cache()`.
-- **`core/`**: `config.py` (ajustes), `energy_map.py` (catálogo de edificios y espacios),
+- **`core/`**: `config.py` (ajustes), `energy_map.py` (catálogo general de edificios y espacios),
+  `electricity_map.py` (mapa específico de la pestaña de Electricidad: edificios, cuadros y CPD),
   `clock.py` (UTC local) y `cache.py` (caché TTL).
 - **`db/`** (solo se importa con `DATA_SOURCE=database`):
   - `session.py`: engine async (`mysql+aiomysql`) con TLS y `SET time_zone='+00:00'`.
@@ -86,7 +90,8 @@ Todo el catálogo está en [`app/core/energy_map.py`](../backend/app/core/energy
   sumen 1.
 
 Al añadir entradas, el endpoint `/api/v1/meta/buildings`, los selectores del frontend y las gráficas
-de edificio/espacio se actualizan solos.
+de edificio/espacio se actualizan solos. **La pestaña de Electricidad es independiente**: su catálogo
+está en `app/core/electricity_map.py` y se publica en `/api/v1/energy/electricity/meta`.
 
 El mapa de espacios y aforos se ha tomado del proyecto original (`sensor_map.py`) para que los
 nombres resulten familiares; las cifras de consumo y de clima, en cambio, son simuladas.
@@ -98,6 +103,39 @@ nombres resulten familiares; las cifras de consumo y de clima, en cambio, son si
    los campos al schema Pydantic.
 3. Expón el endpoint en el router y regístralo (ya lo está si reutilizas el router existente).
 4. Añade un test que compruebe las invariantes (cuántos puntos, coherencia de totales, 404…).
+
+## API de Electricidad
+
+La pestaña nueva usa tres endpoints bajo `/api/v1`:
+
+| Endpoint | Uso |
+| -------- | --- |
+| `GET /energy/electricity/meta` | Catálogo de edificios, sectores, fecha de inicio de datos, precio aplicado y origen (`mock`/`database`). |
+| `GET /energy/electricity` | Serie, KPIs, desglose por edificio y sectores para un rango de fechas. |
+| `GET /energy/electricity/compare` | Dos periodos independientes alineados por número de intervalos, con base común. |
+
+Parámetros principales de `/energy/electricity`:
+
+- `start`, `end` (`YYYY-MM-DD`, ambos inclusive; máximo 6 años).
+- `granularity`: `day`, `week`, `month` o `year`.
+- `metric`: `kwh` o `cost` (coste = kWh × `ENERGY_PRICE_EUR_PER_KWH`).
+- `building`: `all`, `ModuloA`, `ModuloB` o `FerminCaballero`.
+- `sector`: opcional, solo si pertenece a Fermín (`PB_D`, `P1_F`, `CPD`, etc.).
+
+La respuesta separa siempre:
+
+- `stats`: total, media, mínimo, máximo y base del ámbito seleccionado;
+- `buildings`: los tres edificios, con su serie y su porcentaje sobre el centro;
+- `sectors`: cuadros de Fermín y CPD, con `has_data` y `share_of_building`;
+- `sectors_total`, `unmetered_total` y `sector_coverage`, para que el desglose parcial reconciliable
+  con el total de Fermín sea explícito.
+
+`/energy/electricity/compare` añade `start_a/end_a/start_b/end_b` y exige el mismo número de
+intervalos en ambos periodos. Devuelve series alineadas (`period_a`, `period_b`, `baseline`), KPIs
+por periodo y `delta_pct`.
+
+> **Solo lectura.** Todos los accesos al recorder son `SELECT`. La caché TTL evita repetir la
+> misma agregación; `electricity_service.clear_cache()` la vacía en tests.
 
 ## Base de datos real (estado de la migración)
 
@@ -111,7 +149,10 @@ controlador → edificio/espacio (ver más abajo).
 | Dato | Modo BD | Fuente |
 | ---- | ------- | ------ |
 | Energía eléctrica del centro | **Real** | `statistics.sum` de `sensor.cuadro_general` (el “cuadro general” de HA). |
-| Energía eléctrica por edificio | **Real (parcial)** | `statistics.sum` de `sensor.edificio_a` (Fermín Caballero) y `sensor.edificio_b` (Módulo B). Son subcontadores parciales (≈3–15 % del total); el resto se expone como `unmetered_total`. |
+| Energía Módulo A | **Real** | `statistics.sum` de `sensor.edificio_a`. |
+| Energía Módulo B | **Real** | `statistics.sum` de `sensor.edificio_b`. |
+| Energía Fermín Caballero | **Real derivada** | `sensor.cuadro_general − sensor.edificio_a − sensor.edificio_b`; no existe un contador único de Fermín. |
+| Sectores de Fermín | **Real parcial** | `statistics.sum` de los cuadros `sensor.planta_*` y de `sensor.sala_computacion` (CPD). Cubren ≈30–38 % de Fermín; el resto se expone como `unmetered_total` y `sector_coverage`. |
 | Gas (sitio completo) | **Real** | `statistics.sum` de `sensor.daily_gas` (m³ → kWh con `GAS_KWH_PER_M3`). Solo se sirve para `building=all`; en un edificio concreto el gas es `0` (hay un único contador). |
 | Temperatura exterior (grados-día) | **Real** | `statistics.mean` o, si no hay, `states` de `sensor.temperatura_meteo`. |
 | Temperatura interior por espacio | **Real** | `statistics.mean`/`states` de `sensor.sensor_temperatura_aXX` y `sensor.temperatura_shellyN`. |

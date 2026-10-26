@@ -64,7 +64,8 @@
 
 ### Objetivo del prototipo
 
-- Un panel único, con **seis pestañas**, un **periodo global** y filtros por edificio/métrica.
+- Un panel único, con **seis pestañas**, un **periodo global** (salvo Electricidad, con fechas
+  propias) y filtros por edificio/métrica.
 - Gráficas interactivas, exportables y compartibles por URL.
 - Contrato de API estable y posibilidad de cambiar entre datos reales y simulados.
 
@@ -75,7 +76,8 @@
 ### Qué se ha construido
 
 - **Resumen:** KPIs del centro.
-- **Electricidad:** consumo, carga base vs. actividad, comparativa, eficiencia y reparto por edificio.
+- **Electricidad:** fechas propias, consumo/coste, reparto Módulo A / Módulo B / Fermín, sectores de
+  Fermín y comparativa de dos periodos con base de centro cerrado.
 - **Iluminación:** luminarias vs. luz natural, ranking por espacio y despilfarro.
 - **Climatización y gas:** gas vs. grados-día, válvulas vs. temperatura y aulas vacías.
 - **Ocupación y aire:** cruce ocupación ↔ CO₂.
@@ -111,8 +113,10 @@
 ### 6.1 Cabecera y periodo global (1 min)
 
 - Cambiar de **Día → Semana → Mes → Año**.
-- Señalar que el cambio afecta a todas las gráficas.
-- Enseñar que la URL guarda `tab` y `range`: se puede recargar o compartir la vista.
+- Señalar que el cambio afecta a todas las gráficas **excepto Electricidad**, que tiene un rango de
+  fechas propio y agrupa los datos automáticamente.
+- Enseñar que la URL guarda `tab` y `range` global: se puede recargar o compartir la vista. Los
+  filtros de Electricidad aún no se guardan en la URL.
 - Mencionar el **export CSV** en las tablas.
 
 ### 6.2 Resumen (1–2 min)
@@ -130,16 +134,21 @@
 
 Orden recomendado:
 
-1. **Consumo:** elegir “Todos los edificios”; cambiar métrica kWh/€/CO₂.
-   - Señalar total, media y pico.
-   - Comparar con Home Assistant en el mismo intervalo.
-   - Decir: “El total sale de `sensor.cuadro_general`, el mismo contador del cuadro general de HA.”
-2. **Carga base vs. actividad:** explicar noches y fines de semana.
-3. **Comparativa:** periodo actual frente al anterior.
-4. **Eficiencia:** kWh/m² y kWh/persona·hora; aviso de cobertura parcial.
-5. **Por edificio:** enseñar “No desglosado” y el porcentaje de cobertura.
-   - Seleccionar un edificio y enseñar el aviso: su contador es un subcontador parcial.
-6. **Mensaje clave:** “El total es real; el reparto por edificio es parcial y lo decimos claramente.”
+1. **Filtros:** elegir un rango de fechas absoluto y métrica consumo/coste. La agrupación
+   (día/semana/mes/año) se calcula automáticamente. La cabecera oculta el periodo global en esta
+   pestaña.
+   - Señalar total, media, mínimo, máximo y base fuera de horario.
+   - Decir: “El coste se calcula a 0,20 €/kWh; el consumo sale del recorder, solo lectura.”
+2. **Reparto por edificio:** enseñar Módulo A, Módulo B y Fermín Caballero.
+   - Explicar: “El total es `sensor.cuadro_general`; A y B son contadores directos; Fermín se
+     obtiene como total − A − B.”
+3. **Sectores de Fermín:** cuadros de planta + CPD y barra gris “No desglosado”.
+   - Enseñar la cobertura (≈30–38 %) y decir que nunca se reparte lo no medido.
+4. **Comparativa:** dos periodos independientes, dos líneas de color y base discontinua.
+   - Comparar 2026 frente a 2025 o dos semanas completas.
+5. **Base de centro cerrado:** noches L-V y fines de semana; los festivos aún no se excluyen.
+6. **Mensaje clave:** “El total es real; Fermín es una derivación y los cuadros son parciales, y lo
+   decimos claramente.”
 
 ### 6.4 Iluminación (1–2 min)
 
@@ -180,7 +189,9 @@ Orden recomendado:
 | Dato | Estado | Comentario |
 | --- | --- | --- |
 | Electricidad total del centro | **Real** | `sensor.cuadro_general`, mismo que HA. |
-| Electricidad por edificio | **Real parcial** | `sensor.edificio_a/b` cubren aprox. 3–15 % del total. |
+| Electricidad Módulo A / B | **Real** | `sensor.edificio_a` y `sensor.edificio_b`. |
+| Electricidad Fermín Caballero | **Real derivada** | `Cuadro General − Módulo A − Módulo B`. |
+| Sectores de Fermín | **Real parcial** | Cuadros de planta + CPD, ≈30–38 % de Fermín; el resto es “No desglosado”. |
 | Gas | **Real** | Solo centro completo; no hay contador por edificio. |
 | Grados-día y temperatura exterior | **Real** | Sensor meteorológico. |
 | Temperatura/humedad interior | **Real** | Sensores por espacio. |
@@ -197,8 +208,9 @@ Orden recomendado:
 - Antes el total eléctrico sumaba A+B y daba una fracción del consumo real.
 - Ahora:
   - el total usa `sensor.cuadro_general`;
-  - los edificios A/B se muestran como subcontadores parciales;
-  - se añade “No desglosado” y un porcentaje de cobertura;
+  - Módulo A y Módulo B son contadores directos de sus edificios;
+  - Fermín Caballero se deriva como `Cuadro General − Módulo A − Módulo B`;
+  - el desglose de Fermín por cuadros es parcial y se añade “No desglosado” con su cobertura;
   - se corrigió el desfase de una hora al interpretar `statistics.sum`.
 - Resultado: el total del panel coincide con el gráfico de HA para el mismo contador e intervalo.
 
@@ -304,7 +316,7 @@ Orden recomendado:
 
 ### “¿Qué es lo más importante que falta?”
 
-- El mapeo de iluminación y los contadores generales por edificio.
+- El mapeo de iluminación y los contadores directos que falten (Fermín no tiene uno único).
 - Sin eso, el detalle por edificio/espacio seguirá siendo parcial.
 
 ---
@@ -339,7 +351,7 @@ Orden recomendado:
 | Pestaña | Frase para la reunión |
 | --- | --- |
 | Resumen | “La foto rápida del centro en el periodo elegido.” |
-| Electricidad | “Dónde, cuándo y con qué eficiencia se consume la electricidad.” |
+| Electricidad | “Cuánto consume cada edificio y cada cuadro, y cuánto se aleja de la base de centro cerrado.” |
 | Iluminación | “Cuánto pesa la luz y cuánto se enciende sin necesidad.” |
 | Climatización | “Gas, grados-día y calor en aulas vacías.” |
 | Ocupación y aire | “Cómo se relaciona la gente con la calidad del aire.” |

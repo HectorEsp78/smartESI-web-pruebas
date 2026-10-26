@@ -302,6 +302,43 @@ async def _load_counter_series(
     return series
 
 
+async def load_hourly_statistics(
+    session: AsyncSession,
+    statistic_to_key: dict[str, str],
+    start_local: datetime,
+    end_local: datetime,
+) -> dict[str, dict[datetime, float]]:
+    """Hourly kWh for arbitrary cumulative statistics, keyed by caller key.
+
+    ``statistic_to_key`` maps a Home Assistant statistic id (for example
+    ``sensor.cuadro_general``) to the key used by the service. The helper is
+    shared by the original energy endpoints and by the new Electricity tab.
+
+    One extra hour is fetched before the window so the first in-window hour has
+    a preceding cumulative value to subtract.
+    """
+    if not statistic_to_key:
+        return {}
+
+    rows = await repository.fetch_statistics_sums(
+        session,
+        list(statistic_to_key.keys()),
+        _to_utc_naive(start_local - timedelta(hours=1)),
+        _to_utc_naive(end_local),
+    )
+
+    by_entity: dict[str, list[tuple[datetime, float]]] = {}
+    for statistic_id, start, total in rows:
+        by_entity.setdefault(statistic_id, []).append((start, total))
+
+    return {
+        statistic_to_key[statistic_id]: cumulative_to_hourly(
+            series, max_delta=settings.ENERGY_MAX_KWH_PER_HOUR
+        )
+        for statistic_id, series in by_entity.items()
+    }
+
+
 async def load_hourly_energy(
     session: AsyncSession,
     building_ids: list[str],
@@ -326,27 +363,7 @@ async def load_hourly_energy(
             if building_id in BUILDING_ENERGY_STATISTIC
         }
     )
-    if not entity_to_key:
-        return {}
-
-    # One extra hour so the first in-window hour has a preceding sum to subtract.
-    rows = await repository.fetch_statistics_sums(
-        session,
-        list(entity_to_key.keys()),
-        _to_utc_naive(start_local - timedelta(hours=1)),
-        _to_utc_naive(end_local),
-    )
-
-    by_entity: dict[str, list[tuple[datetime, float]]] = {}
-    for statistic_id, start, total in rows:
-        by_entity.setdefault(statistic_id, []).append((start, total))
-
-    return {
-        entity_to_key[statistic_id]: cumulative_to_hourly(
-            series, max_delta=settings.ENERGY_MAX_KWH_PER_HOUR
-        )
-        for statistic_id, series in by_entity.items()
-    }
+    return await load_hourly_statistics(session, entity_to_key, start_local, end_local)
 
 
 async def load_hourly_gas(

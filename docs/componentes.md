@@ -7,8 +7,9 @@ de periodo global, componentes de UI reutilizables y cada gráfica con su endpoi
 - Estructura y stack del frontend: [`frontend.md`](frontend.md).
 - Origen de los datos: [`datos.md`](datos.md).
 
-La página es **una sola SPA** (`pages/Stats.tsx`) organizada en **seis pestañas**. Encima de todas
-hay un **selector de periodo global** en la cabecera.
+La página es **una sola SPA** (`pages/Stats.tsx`) organizada en **seis pestañas**. La cabecera tiene un
+**selector de periodo global** para las pestañas que aún usan rangos relativos; en **Electricidad** se
+oculta porque esa pestaña tiene su propio rango de fechas y calcula la agrupación automáticamente.
 
 ---
 
@@ -28,7 +29,7 @@ Stats.tsx
 | id | Etiqueta | Contenido |
 | -- | -------- | --------- |
 | `resumen` | Resumen | `OverviewSection` (KPIs). |
-| `electricidad` | Electricidad | Consumo, desglose, comparativa, eficiencia y por edificio. |
+| `electricidad` | Electricidad | `ElectricityDashboard`: filtros propios, KPIs, edificios, sectores y comparativa. |
 | `iluminacion` | Iluminación | Luz vs. natural, ranking por espacio y despilfarro. |
 | `climatizacion` | Climatización y gas | Gas/grados-día, válvulas y aulas vacías. |
 | `ocupacion-aire` | Ocupación y aire | Cruce ocupación ↔ CO₂. |
@@ -39,15 +40,18 @@ El estado de la pestaña activa vive en `Stats.tsx`; `Header` lo recibe por prop
 ### Periodo global (`context/RangeContext.tsx`)
 
 - `RangeProvider` guarda el rango (`day` / `week` / `month` / `year`) en un contexto.
-- `useGlobalRange()` lo consumen la cabecera (para el selector) y **todas** las gráficas.
-- Al cambiar el periodo en la cabecera, todas las pestañas se recalculan a la vez.
-- Los controles **de edificio y de métrica siguen siendo locales** a cada gráfica.
+- `useGlobalRange()` lo consumen la cabecera (para el selector) y las gráficas de las pestañas aún no
+  migradas.
+- Al cambiar el periodo en la cabecera, esas pestañas se recalculan a la vez.
+- **Electricidad** no usa el contexto global: `ElectricityDashboard` mantiene su propio `start`,
+  `end`, `granularity` y `metric`. La cabecera oculta el selector de periodo cuando esa pestaña está
+  activa.
 
 ### Cabecera (`components/Header.tsx`)
 
 - Logos UCLM / ESI y banner Smart ESI (identidad institucional).
 - **Pestañas** con la línea activa animada (`motion`).
-- **Selector de periodo** global (`RangeSelector`), visible en todo momento.
+- **Selector de periodo** global (`RangeSelector`), visible salvo en la pestaña de Electricidad.
 
 ---
 
@@ -78,15 +82,29 @@ por edificio y estilos de ejes/tooltip).
 
 ## 4. Electricidad
 
+La pestaña se compone en `components/stats/electricity/ElectricityDashboard.tsx`, que mantiene el
+estado de fechas, métrica y ámbito, y calcula la agrupación temporal según el rango seleccionado.
+
 | Componente | Endpoint | Qué muestra |
 | ---------- | -------- | ----------- |
-| `EnergyConsumptionChart` | `/energy/consumption` | Área con la evolución del consumo + métrica (kWh/€/CO₂) y edificio. |
-| `EnergyBreakdownChart` | `/energy/breakdown` | Barras apiladas **carga base vs. actividad** y **luz vs. resto**, con cuotas. |
-| `EnergyCompareChart` | `/energy/compare` | Líneas **periodo actual vs. anterior** + `delta_pct`. |
-| `EnergyEfficiencyChart` | `/energy/efficiency` | Barras horizontales de **kWh/m²** + tabla con kWh/persona·hora y coste; avisa de la cobertura parcial del desglose. |
-| `EnergyByBuildingChart` | `/energy/by-building` | Barras por edificio, top de espacios y tabla con `%` sobre el total; añade «No desglosado» para cuadrar con el cuadro general. |
+| `ElectricityFilters` | `/energy/electricity/meta` | Fechas `start`–`end`, consumo/coste, edificio y sector. Oculta el selector global de la cabecera; la agrupación temporal es automática. |
+| `ElectricitySummary` | `/energy/electricity` | KPIs: total, media por intervalo, mínimo, máximo, base fuera de horario y cobertura de sectores. |
+| `ElectricityBuildingsChart` | `/energy/electricity` | Barras apiladas de **Módulo A / Módulo B / Fermín** + línea de base; tabla con total, media, mínimo, máximo y `%` sobre el centro. |
+| `ElectricitySectorsChart` | `/energy/electricity` | Barras apiladas de los **cuadros de planta + CPD** y **“No desglosado”**; tabla con totales y `%` sobre Fermín. |
+| `ElectricityComparisonChart` | `/energy/electricity/compare` | Dos periodos independientes con dos líneas de color y base discontinua; KPIs de ambos periodos y variación. |
 
-**Controles:** edificio (`SelectField`) y métrica (`RangeSelector`); el periodo lo fija la cabecera.
+**Controles:** propios de la pestaña (no del contexto global). La comparativa comparte la agrupación
+automática, la métrica y el ámbito con los filtros, pero mantiene sus dos rangos de fechas.
+
+**Notas de implementación:**
+
+- `lib/electricity.ts` centraliza fechas por defecto, formato de periodos y valores.
+- `types/electricity.ts` contiene los DTO; `api/electricity.ts` construye las URLs y
+  `hooks/useElectricity.ts` envuelve las consultas.
+- El gráfico de edificios suma las bases individuales para dibujar la base del centro; no usa la base
+  del ámbito seleccionado, porque las barras siempre muestran los tres edificios.
+- El gráfico de sectores calcula “No desglosado” como `Fermín − suma de sectores medidos` en cada
+  intervalo.
 
 ---
 
@@ -143,12 +161,14 @@ components/*  →  hooks/use*  →  api/*  →  fetch /api/v1/...
 ```
 
 - **`types/`**: un DTO por respuesta de la API (en `snake_case`, igual que el backend):
-  `energy.ts`, `lighting.ts`, `climate.ts`, `decisions.ts`, `correlation.ts`, `meta.ts`.
-- **`api/`**: una función `fetch*` por endpoint, con `signal` de cancelación.
+  `energy.ts`, `electricity.ts`, `lighting.ts`, `climate.ts`, `decisions.ts`, `correlation.ts`,
+  `meta.ts`.
+- **`api/`**: una función `fetch*` por endpoint, con `signal` de cancelación; la nueva pestaña usa
+  `api/electricity.ts`.
 - **`hooks/`**: envuelven la API en `useQuery` (`staleTime` 60 s, `placeholderData` para no
-  parpadear): `useEnergyConsumption`, `useEnergyByBuilding`, `useEnergyStats`
-  (breakdown/compare/efficiency), `useLighting`, `useClimate`, `useDecisions`,
-  `useOccupancyAirQuality`, `useBuildings`.
+  parpadear): `useElectricityMeta`, `useElectricityStats`, `useElectricityCompare`,
+  `useEnergyConsumption`, `useEnergyByBuilding`, `useEnergyStats` (breakdown/compare/efficiency),
+  `useLighting`, `useClimate`, `useDecisions`, `useOccupancyAirQuality`, `useBuildings`.
 
 ---
 
@@ -159,5 +179,7 @@ components/*  →  hooks/use*  →  api/*  →  fetch /api/v1/...
    `src/app/hooks/`.
 3. Crea el **componente** en `src/app/components/stats/<dominio>/` usando `ChartCard` para la tarjeta
    y `RangeSelector` / `SelectField` para los controles. Reutiliza `lib/chartTheme.ts` y `lib/format.ts`.
+   Si la pestaña necesita fechas absolutas, sigue el patrón de `ElectricityDashboard` en lugar de
+   `useGlobalRange()`.
 4. Añádelo al contenido de la pestaña correspondiente en `pages/Stats.tsx`.
 5. Añade un test si la lógica lo merece.

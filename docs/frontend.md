@@ -29,17 +29,22 @@ pages/Stats  →  components/stats/*  →  hooks/use*  →  api/*  →  fetch /a
      context/RangeContext (periodo)   lib/ (format, chartTheme, sections)  ·  types/ (DTOs)
 ```
 
-- **`api/`**: una función `fetch*` por endpoint (`energy.ts`, `lighting.ts`, `climate.ts`,
-  `decisions.ts`, `correlation.ts`, `meta.ts`). La resolución de la URL vive en `api/baseUrl.ts` y
-  las utilidades compartidas en `api/http.ts`.
+- **`api/`**: una función `fetch*` por endpoint (`energy.ts`, `electricity.ts`, `lighting.ts`,
+  `climate.ts`, `decisions.ts`, `correlation.ts`, `meta.ts`). La resolución de la URL vive en
+  `api/baseUrl.ts` y las utilidades compartidas en `api/http.ts`.
 - **`context/RangeContext.tsx`**: `RangeProvider` guarda el **periodo global**; `useGlobalRange()` lo
-  consumen la cabecera y todas las gráficas. Así un único selector temporal afecta a todo el panel.
+  consumen la cabecera y las gráficas de las pestañas aún no migradas. **Electricidad** tiene su
+  propio rango absoluto (`start`/`end`) y no usa este contexto; la cabecera oculta el selector en esa
+  pestaña.
 - **`hooks/`**: envuelven la API en `useQuery` y devuelven `{ data, isLoading, isFetching, error,
   retry }`. Usan `placeholderData` para no parpadear al cambiar de rango.
 
   | Hook | Query key | `staleTime` |
   | ---- | --------- | ----------- |
   | `useBuildings` | `['meta','buildings']` | 30 min |
+  | `useElectricityMeta` | `['electricityMeta']` | 30 min |
+  | `useElectricityStats` | `['electricity', query]` | 60 s |
+  | `useElectricityCompare` | `['electricityCompare', query]` | 60 s |
   | `useEnergyConsumption` | `['energyConsumption', range, building, metric]` | 60 s |
   | `useEnergyByBuilding` | `['energyByBuilding', range, metric]` | 60 s |
   | `useEnergyBreakdown` | `['energyBreakdown', range, building]` | 60 s |
@@ -54,17 +59,19 @@ pages/Stats  →  components/stats/*  →  hooks/use*  →  api/*  →  fetch /a
   cargando/error/vacío), `RangeSelector`, `SelectField`, `StatCard` y `SectionHeading`.
 - **`components/stats/`**: las gráficas, con una subcarpeta por dominio: `electricity/`,
   `lighting/`, `climate/`, `decisions/`, más las de nivel superior (`OverviewSection`,
-  `EnergyConsumptionChart`, `EnergyByBuildingChart`, `OccupancyAirQualityChart`). Cada componente
-  gestiona sus propios controles **de edificio y métrica** con los hooks; el **periodo** lo toma del
-  contexto global.
+  `OccupancyAirQualityChart`). La pestaña de Electricidad se agrupa en
+  `electricity/ElectricityDashboard.tsx`; el resto de componentes mantiene sus propios controles de
+  edificio y métrica y toma el periodo del contexto global.
 - **`pages/Stats.tsx`**: envuelve todo en `RangeProvider`, pinta el `Header` y el **contenido de la
-  pestaña activa**. Las pestañas se definen en `lib/sections.ts`. La pestaña y el periodo activos se
-  reflejan en la URL (`?tab=electricidad&range=month`) con `lib/urlState.ts`, así que una vista se
-  puede compartir o recargar sin perder el estado.
+  pestaña activa**. Las pestañas se definen en `lib/sections.ts`. La pestaña y el periodo global se
+  reflejan en la URL (`?tab=electricidad&range=month`) con `lib/urlState.ts`. Los filtros propios de
+  Electricidad (fechas, ámbito) viven en el estado del componente y no se guardan aún en la URL.
+  La granularidad no se elige a mano: se deriva del rango de fechas.
 - **`components/Header.tsx`**: logos y banner, la navegación por pestañas y el **selector de periodo
-  global** (sincronizado con la URL).
+  global** (oculto en Electricidad, que tiene controles propios).
 - **`lib/csv.ts`** + `components/ui/ExportCsvButton.tsx`: exportación a CSV (separador `;` y BOM
-  UTF-8 para Excel) de las tablas de Decisiones, eficiencia y luminarias por espacio.
+  UTF-8 para Excel) de las tablas de Decisiones, Electricidad (edificios y sectores) y luminarias
+  por espacio.
 
 En [`componentes.md`](componentes.md) hay el catálogo detallado de cada pieza de la web.
 
@@ -89,7 +96,8 @@ En [`componentes.md`](componentes.md) hay el catálogo detallado de cada pieza d
    `src/app/hooks/`.
 3. Crea el componente en `src/app/components/stats/<dominio>/` usando `ChartCard` para la tarjeta y
    `RangeSelector`/`SelectField` para los controles **locales** (edificio, métrica). Para el periodo,
-   usa `useGlobalRange()` y no añadas un selector propio.
+   usa `useGlobalRange()` y no añadas un selector propio **salvo que la pestaña migre a fechas
+   absolutas**, como hace `ElectricityDashboard`.
 4. Añádelo al contenido de la pestaña correspondiente en `pages/Stats.tsx`. Si creas una pestaña
    nueva, añádela a `lib/sections.ts` y a `TAB_HEADING`.
 5. Añade un test si la lógica lo merece.
