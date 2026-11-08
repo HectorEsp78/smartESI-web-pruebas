@@ -1,6 +1,6 @@
 # Documentación
 
-Documentación del módulo de estadísticas de Smart ESI. La web tiene dos pestañas: **Electricidad** e **Iluminación**.
+Documentación del módulo de estadísticas de Smart ESI. La web tiene cinco pestañas: **Electricidad**, **Iluminación**, **Infraestructura**, **Medio Ambiente** y **Mantenimiento**.
 
 | Documento | Contenido |
 | --------- | --------- |
@@ -13,6 +13,6 @@ Documentación del módulo de estadísticas de Smart ESI. La web tiene dos pesta
 | [Estadísticos](estadisticos.md) | Qué se calcula en cada gráfica y para qué sirve. |
 | [Componentes](componentes.md) | Piezas de la interfaz y su responsabilidad. |
 | [Gráficas](graficas.md) | Qué muestra cada gráfica y cómo interpretarla. |
-| [Backlog](backlog.md) | Ideas pendientes, limitadas a las dos pestañas. |
+| [Backlog](backlog.md) | Ideas pendientes, limitadas a las pestañas actuales. |
 
 Para volver al inicio, consulta el [`README.md`](../README.md) raíz.

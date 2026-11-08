@@ -15,6 +15,7 @@ from app.core.electricity_map import (
 )
 from app.schemas.electricity import (
     ElectricityBuildingRef,
+    ElectricityCompareManyResponse,
     ElectricityCompareResponse,
     ElectricityGranularity,
     ElectricityMetaResponse,
@@ -101,6 +102,41 @@ async def get_electricity_compare(
             end_a=end_a,
             start_b=start_b,
             end_b=end_b,
+            granularity=granularity,
+            metric=metric,
+            building=building,
+            sector=sector,
+        )
+    except ValueError as error:
+        raise _bad_request(error) from error
+
+
+@router.get("/compare-many", response_model=ElectricityCompareManyResponse)
+async def get_electricity_compare_many(
+    start: list[date] = Query(
+        ..., description="Inclusive start dates, repeat one value per period"
+    ),
+    end: list[date] = Query(
+        ..., description="Inclusive end dates, repeat one value per period"
+    ),
+    granularity: ElectricityGranularity = "day",
+    metric: ElectricityMetric = "kwh",
+    building: str = "all",
+    sector: str | None = None,
+) -> ElectricityCompareManyResponse:
+    """Compare any number of periods on the same chart.
+
+    The client sends ``start`` and ``end`` once per period, for example:
+    ``?start=2026-10-01&end=2026-10-31&start=2025-10-01&end=2025-10-31``.
+    """
+    if len(start) != len(end):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cada periodo necesita una fecha de inicio y una fecha de fin.",
+        )
+    try:
+        return await electricity_service.build_electricity_compare_many(
+            list(zip(start, end)),
             granularity=granularity,
             metric=metric,
             building=building,

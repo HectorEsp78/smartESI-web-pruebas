@@ -118,6 +118,38 @@ export interface ElectricityCompareDto {
   series: ElectricityComparePointDto[];
 }
 
+export interface ElectricityComparePeriodDto {
+  start: string;
+  end: string;
+  days: number;
+  stats: ElectricityStatsDto;
+  /** Difference against the first period, in percent. */
+  delta_pct: number;
+  series: ElectricityPointDto[];
+}
+
+export interface ElectricityCompareManyPointDto {
+  index: number;
+  /** One entry per period; null when that period has no bucket here. */
+  timestamps: Array<string | null>;
+  values: Array<number | null>;
+  baseline: number;
+}
+
+export interface ElectricityCompareManyDto {
+  granularity: ElectricityGranularity;
+  metric: ElectricityMetric;
+  unit: string;
+  scope: string;
+  scope_label: string;
+  building_id: string | null;
+  sector_id: string | null;
+  periods: ElectricityComparePeriodDto[];
+  baseline_hourly: number;
+  equal_length: boolean;
+  series: ElectricityCompareManyPointDto[];
+}
+
 export interface ElectricityBuildingRefDto {
   id: string;
   label: string;

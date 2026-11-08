@@ -40,6 +40,9 @@ from app.core.electricity_map import (
 from app.core.buildings import BUILDINGS_BY_ID
 from app.schemas.electricity import (
     ElectricityBuildingStats,
+    ElectricityCompareManyPoint,
+    ElectricityCompareManyResponse,
+    ElectricityComparePeriod,
     ElectricityComparePoint,
     ElectricityCompareResponse,
     ElectricityGranularity,
@@ -57,6 +60,10 @@ UNIT_BY_METRIC: dict[ElectricityMetric, str] = {"kwh": "kWh", "cost": "€"}
 # Six years is enough for the available recorder data and keeps a single request
 # from scanning an unbounded number of rows.
 MAX_RANGE_DAYS = 366 * 6
+# A comparison is meant to stay readable and keep the response bounded. Twelve
+# periods already produce a busy chart, which is enough for every realistic use
+# case (for example the same month across twelve years).
+MAX_COMPARE_PERIODS = 12
 
 # Mock mode: share of Fermín's consumption represented by each partial panel.
 # The values sum to 0.30, mirroring the real coverage (~30 %) measured in the
@@ -594,6 +601,145 @@ async def build_electricity(
     return await _cached(_cache, cache_key, _compute)
 
 
+async def build_electricity_compare_many(
+    periods: list[tuple[date, date]],
+    granularity: ElectricityGranularity,
+    metric: ElectricityMetric,
+    building: str | None,
+    sector: str | None,
+) -> ElectricityCompareManyResponse:
+    """Compare any number of independent periods on a shared timeline.
+
+    Periods may have different lengths. In that case they are aligned from their
+    first bucket and the shortest ones simply end earlier (their missing buckets
+    are returned as ``None``), which keeps the chart honest instead of repeating
+    or stretching data.
+    """
+    if len(periods) < 2:
+        raise ValueError("Selecciona al menos dos periodos para comparar.")
+    if len(periods) > MAX_COMPARE_PERIODS:
+        raise ValueError(
+            f"Como máximo puedes comparar {MAX_COMPARE_PERIODS} periodos a la vez."
+        )
+    for start, end in periods:
+        _validate_range(start, end)
+    building_id, sector_id = _validate_scope(building, sector)
+
+    bucket_sets = [
+        _build_buckets(start, end, granularity) for start, end in periods
+    ]
+    range_bounds = [_range_bounds(start, end) for start, end in periods]
+    cache_key = (
+        "electricity-compare-many",
+        tuple((start.isoformat(), end.isoformat()) for start, end in periods),
+        granularity,
+        metric,
+        building_id,
+        sector_id,
+    )
+
+    async def _compute() -> ElectricityCompareManyResponse:
+        datasets = await asyncio.gather(
+            *[_load_data(range_start, range_end) for range_start, range_end in range_bounds]
+        )
+
+        series_list: list[_HourlySeries] = []
+        stats_list: list[ElectricityStats] = []
+        closed_total_sum = 0.0
+        closed_count_sum = 0
+        scope = ELECTRICITY_ALL
+        scope_label = "Todos los edificios"
+        resolved_building_id: str | None = building_id
+        resolved_sector_id: str | None = sector_id
+
+        for data, buckets, (range_start, range_end) in zip(
+            datasets, bucket_sets, range_bounds
+        ):
+            hourly, scope, scope_label, resolved_building_id, resolved_sector_id = (
+                _resolve_scope(data, building_id, sector_id)
+            )
+            series = _HourlySeries.from_mapping(hourly)
+            stats, _ = _base_stats(series, buckets, metric, range_start, range_end)
+            closed_total, closed_count = series.closed_totals(range_start, range_end)
+            closed_total_sum += closed_total
+            closed_count_sum += closed_count
+            series_list.append(series)
+            stats_list.append(stats)
+
+        baseline_kwh_hour = (
+            closed_total_sum / closed_count_sum if closed_count_sum else 0.0
+        )
+        baseline_per_hour = _convert(baseline_kwh_hour, metric)
+        reference_total = stats_list[0].total
+
+        compare_periods: list[ElectricityComparePeriod] = []
+        points_by_period: list[list[ElectricityPoint]] = []
+        for index, ((start, end), buckets, stats, series) in enumerate(
+            zip(periods, bucket_sets, stats_list, series_list)
+        ):
+            points = _series_points(series, buckets, metric, baseline_kwh_hour)
+            delta_pct = (
+                (stats.total - reference_total) / reference_total * 100.0
+                if reference_total
+                else 0.0
+            )
+            compare_periods.append(
+                ElectricityComparePeriod(
+                    start=start,
+                    end=end,
+                    days=(end - start).days + 1,
+                    stats=stats,
+                    delta_pct=round(delta_pct, 1),
+                    series=points,
+                )
+            )
+            points_by_period.append(points)
+
+        max_buckets = max(len(points) for points in points_by_period)
+        aligned: list[ElectricityCompareManyPoint] = []
+        for index in range(max_buckets):
+            timestamps = [
+                points[index].timestamp if index < len(points) else None
+                for points in points_by_period
+            ]
+            values = [
+                points[index].value if index < len(points) else None
+                for points in points_by_period
+            ]
+            bucket_hours = [
+                bucket_sets[period_index][index].hours
+                for period_index, points in enumerate(points_by_period)
+                if index < len(points)
+            ]
+            average_hours = (
+                sum(bucket_hours) / len(bucket_hours) if bucket_hours else 0.0
+            )
+            aligned.append(
+                ElectricityCompareManyPoint(
+                    index=index,
+                    timestamps=timestamps,
+                    values=values,
+                    baseline=round(baseline_per_hour * average_hours, 2),
+                )
+            )
+
+        return ElectricityCompareManyResponse(
+            granularity=granularity,
+            metric=metric,
+            unit=UNIT_BY_METRIC[metric],
+            scope=scope,
+            scope_label=scope_label,
+            building_id=resolved_building_id,
+            sector_id=resolved_sector_id,
+            periods=compare_periods,
+            baseline_hourly=round(baseline_per_hour, 4),
+            equal_length=len({len(points) for points in points_by_period}) == 1,
+            series=aligned,
+        )
+
+    return await _cached(_cache, cache_key, _compute)
+
+
 async def build_electricity_compare(
     start_a: date,
     end_a: date,
@@ -604,111 +750,59 @@ async def build_electricity_compare(
     building: str | None,
     sector: str | None,
 ) -> ElectricityCompareResponse:
-    _validate_range(start_a, end_a)
-    _validate_range(start_b, end_b)
-    building_id, sector_id = _validate_scope(building, sector)
-    buckets_a = _build_buckets(start_a, end_a, granularity)
-    buckets_b = _build_buckets(start_b, end_b, granularity)
-    if len(buckets_a) != len(buckets_b):
+    """Backwards-compatible two-period comparison.
+
+    The frontend now uses :func:`build_electricity_compare_many`, but the
+    original endpoint is kept for clients that still expect the A/B shape.
+    """
+    many = await build_electricity_compare_many(
+        [(start_a, end_a), (start_b, end_b)],
+        granularity,
+        metric,
+        building,
+        sector,
+    )
+    if not many.equal_length:
         raise ValueError(
             "Los dos periodos deben tener el mismo número de intervalos. "
             "Ajusta las fechas o cambia la granularidad."
         )
 
-    range_a_start, range_a_end = _range_bounds(start_a, end_a)
-    range_b_start, range_b_end = _range_bounds(start_b, end_b)
-    cache_key = (
-        "electricity-compare",
-        start_a.isoformat(),
-        end_a.isoformat(),
-        start_b.isoformat(),
-        end_b.isoformat(),
-        granularity,
-        metric,
-        building_id,
-        sector_id,
-    )
-
-    async def _compute() -> ElectricityCompareResponse:
-        data_a, data_b = await _load_data_pair(
-            range_a_start, range_a_end, range_b_start, range_b_end
+    period_a, period_b = many.periods
+    total_a = period_a.stats.total
+    total_b = period_b.stats.total
+    delta_pct = ((total_a - total_b) / total_b * 100.0) if total_b else 0.0
+    points = [
+        ElectricityComparePoint(
+            index=point.index,
+            timestamp_a=period_a.series[point.index].timestamp,
+            timestamp_b=period_b.series[point.index].timestamp,
+            period_a=period_a.series[point.index].value,
+            period_b=period_b.series[point.index].value,
+            baseline=point.baseline,
         )
-        hourly_a, scope, scope_label, resolved_building_id, resolved_sector_id = _resolve_scope(
-            data_a, building_id, sector_id
-        )
-        hourly_b, _, _, _, _ = _resolve_scope(data_b, building_id, sector_id)
-        series_a = _HourlySeries.from_mapping(hourly_a)
-        series_b = _HourlySeries.from_mapping(hourly_b)
+        for point in many.series
+    ]
 
-        stats_a, baseline_a = _base_stats(
-            series_a, buckets_a, metric, range_a_start, range_a_end
-        )
-        stats_b, baseline_b = _base_stats(
-            series_b, buckets_b, metric, range_b_start, range_b_end
-        )
-
-        closed_a, count_a = series_a.closed_totals(range_a_start, range_a_end)
-        closed_b, count_b = series_b.closed_totals(range_b_start, range_b_end)
-        closed_count = count_a + count_b
-        baseline_kwh_hour = (closed_a + closed_b) / closed_count if closed_count else 0.0
-        baseline_per_hour = _convert(baseline_kwh_hour, metric)
-
-        points: list[ElectricityComparePoint] = []
-        for index, (bucket_a, bucket_b) in enumerate(zip(buckets_a, buckets_b)):
-            value_a = _convert(series_a.sum_between(bucket_a.start, bucket_a.end), metric)
-            value_b = _convert(series_b.sum_between(bucket_b.start, bucket_b.end), metric)
-            average_hours = (bucket_a.hours + bucket_b.hours) / 2.0
-            points.append(
-                ElectricityComparePoint(
-                    index=index,
-                    timestamp_a=bucket_a.start,
-                    timestamp_b=bucket_b.start,
-                    period_a=round(value_a, 2),
-                    period_b=round(value_b, 2),
-                    baseline=round(baseline_per_hour * average_hours, 2),
-                )
-            )
-
-        total_a = stats_a.total
-        total_b = stats_b.total
-        delta_pct = ((total_a - total_b) / total_b * 100.0) if total_b else 0.0
-        period_a_days = (end_a - start_a).days + 1
-        period_b_days = (end_b - start_b).days + 1
-
-        return ElectricityCompareResponse(
-            granularity=granularity,
-            metric=metric,
-            unit=UNIT_BY_METRIC[metric],
-            scope=scope,
-            scope_label=scope_label,
-            building_id=resolved_building_id,
-            sector_id=resolved_sector_id,
-            start_a=start_a,
-            end_a=end_a,
-            start_b=start_b,
-            end_b=end_b,
-            period_a_days=period_a_days,
-            period_b_days=period_b_days,
-            period_a=stats_a,
-            period_b=stats_b,
-            baseline_hourly=round(baseline_per_hour, 4),
-            delta_pct=round(delta_pct, 1),
-            series=points,
-        )
-
-    return await _cached(_cache, cache_key, _compute)
-
-
-async def _load_data_pair(
-    start_a: datetime,
-    end_a: datetime,
-    start_b: datetime,
-    end_b: datetime,
-) -> tuple[_ElectricityData, _ElectricityData]:
-    """Load two periods independently so a long gap is never spread across them."""
-    return await asyncio.gather(
-        _load_data(start_a, end_a),
-        _load_data(start_b, end_b),
+    return ElectricityCompareResponse(
+        granularity=many.granularity,
+        metric=many.metric,
+        unit=many.unit,
+        scope=many.scope,
+        scope_label=many.scope_label,
+        building_id=many.building_id,
+        sector_id=many.sector_id,
+        start_a=period_a.start,
+        end_a=period_a.end,
+        start_b=period_b.start,
+        end_b=period_b.end,
+        period_a_days=period_a.days,
+        period_b_days=period_b.days,
+        period_a=period_a.stats,
+        period_b=period_b.stats,
+        baseline_hourly=many.baseline_hourly,
+        delta_pct=round(delta_pct, 1),
+        series=points,
     )
 
 

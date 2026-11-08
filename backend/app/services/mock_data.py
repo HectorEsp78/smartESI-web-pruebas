@@ -6,7 +6,8 @@ during the working day, quieter nights/weekends) but the numbers are invented.
 
 Electricity can run against the real recorder (``DATA_SOURCE=database``);
 Lighting always uses this model for consumption and uses the real occupancy
-counters when they are available.
+counters when they are available. Infrastructure uses the same deterministic
+model for room temperature, humidity, CO₂ and presence when the recorder is off.
 """
 
 from __future__ import annotations
@@ -199,3 +200,93 @@ def space_lighting_kw_share(space: SpaceConfig) -> float:
     spaces = SPACES_BY_BUILDING.get(space.building_id, [])
     total = sum(item.lighting_kw for item in spaces)
     return space.lighting_kw / total if total > 0 else 0.0
+
+
+# --- Room environment (Infrastructure tab) ------------------------------------
+
+
+def environment_presence_ratio(room_id: str, when: datetime) -> float:
+    """Synthetic fraction of the hour with people in a room (0..1)."""
+    local = _floor_local(when)
+    hour = local.hour + local.minute / 60.0
+    weekday = local.weekday()  # 0 = Monday
+
+    if room_id in {"ALU", "AnitaBorg"}:
+        if weekday >= 5:
+            base = 0.45 if 10 <= hour < 20 else 0.05
+        else:
+            base = 0.58 if 8 <= hour < 21 else 0.03
+            if 14 <= hour < 15.5:  # lunch dip
+                base *= 0.55
+    elif room_id == "F0.2":
+        if weekday >= 5:
+            base = 0.0
+        else:
+            base = 0.78 if 8 <= hour < 20 else 0.0
+            if 14 <= hour < 15.5:
+                base *= 0.40
+    else:
+        if weekday >= 5:
+            base = 0.0
+        else:
+            base = 0.86 if 8 <= hour < 21 else 0.0
+            if 14 <= hour < 15.5:
+                base *= 0.35
+
+    if base <= 0:
+        return 0.0
+    noise = 0.75 + 0.50 * _uniform("env-presence", room_id, _hour_key(local))
+    return min(1.0, base * noise)
+
+
+def environment_presence(room_id: str, when: datetime) -> bool:
+    return environment_presence_ratio(room_id, when) >= 0.5
+
+
+def environment_temperature(room_id: str, when: datetime) -> float:
+    local = _floor_local(when)
+    hour = local.hour + local.minute / 60.0
+    season = 2.2 * math.cos((local.month - 7) * math.pi * 2.0 / 12.0)
+    daily = 0.9 * math.sin((hour - 9.0) * math.pi * 2.0 / 24.0)
+    occupied = 0.8 if environment_presence_ratio(room_id, local) > 0.2 else 0.0
+    noise = _jitter("env-temp", room_id, _hour_key(local), amplitude=0.35)
+    return 21.8 + season + daily + occupied + noise
+
+
+def environment_humidity(room_id: str, when: datetime) -> float:
+    local = _floor_local(when)
+    temperature = environment_temperature(room_id, local)
+    noise = _jitter("env-hum", room_id, _hour_key(local), amplitude=4.0)
+    return min(78.0, max(25.0, 48.0 - 0.9 * (temperature - 21.5) + noise))
+
+
+def environment_co2(room_id: str, when: datetime) -> float:
+    local = _floor_local(when)
+    occupancy = environment_presence_ratio(room_id, local)
+    noise = _jitter("env-co2", room_id, _hour_key(local), amplitude=80.0)
+    return min(2200.0, max(400.0, 415.0 + occupancy * 850.0 + noise))
+
+
+def environment_ambient_temperature(when: datetime) -> float:
+    """Reference ambient temperature for the building context."""
+    local = _floor_local(when)
+    hour = local.hour + local.minute / 60.0
+    season = 5.0 * math.cos((local.month - 7) * math.pi * 2.0 / 12.0)
+    daily = 4.5 * math.sin((hour - 9.0) * math.pi * 2.0 / 24.0)
+    noise = _jitter("env-ambient", "ambiente", _hour_key(local), amplitude=0.4)
+    return 16.5 + season + daily + noise
+
+
+def environment_gas_cost(when: datetime) -> float:
+    """Synthetic hourly gas cost, concentrated on weekday mornings."""
+    local = _floor_local(when)
+    if local.weekday() >= 5:
+        return 0.0
+    if 7 <= local.hour < 16:
+        return 2.1 + 0.9 * _uniform("env-gas", _hour_key(local))
+    return 0.05
+
+
+def environment_gas_m3(when: datetime) -> float:
+    """Synthetic gas volume consistent with the generated cost."""
+    return environment_gas_cost(when) / 0.0575

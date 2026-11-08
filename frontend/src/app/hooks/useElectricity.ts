@@ -1,12 +1,14 @@
 import { useQuery } from '@tanstack/react-query';
 import {
   fetchElectricityCompare,
+  fetchElectricityCompareMany,
   fetchElectricityMeta,
   fetchElectricityStats,
 } from '../api/electricity';
 import type { ElectricityPeriod, ElectricityQuery } from '../api/electricity';
 import type {
   ElectricityCompareDto,
+  ElectricityCompareManyDto,
   ElectricityDto,
   ElectricityGranularity,
   ElectricityMetaDto,
@@ -65,6 +67,37 @@ export function useElectricityCompare(
       return fetchElectricityCompare(
         query.periodA,
         query.periodB,
+        query.granularity,
+        query.metric,
+        query.building,
+        query.sector,
+        signal,
+      );
+    },
+    enabled: query !== null,
+    staleTime: STALE_TIME,
+    placeholderData: (previous) => previous,
+  });
+  return { data, isLoading, isFetching, error: error as Error | null, retry: refetch };
+}
+
+export interface ElectricityCompareManyQuery {
+  periods: ElectricityPeriod[];
+  granularity: ElectricityGranularity;
+  metric: ElectricityMetric;
+  building: string;
+  sector?: string;
+}
+
+export function useElectricityCompareMany(
+  query: ElectricityCompareManyQuery | null,
+): Result<ElectricityCompareManyDto> {
+  const { data = null, isLoading, isFetching, error, refetch } = useQuery({
+    queryKey: ['electricityCompareMany', query],
+    queryFn: ({ signal }) => {
+      if (!query) throw new Error('Periodo no válido.');
+      return fetchElectricityCompareMany(
+        query.periods,
         query.granularity,
         query.metric,
         query.building,

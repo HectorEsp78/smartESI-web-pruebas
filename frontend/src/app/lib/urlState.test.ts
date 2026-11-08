@@ -7,6 +7,18 @@ describe('parseDashboardUrlState', () => {
       tab: 'iluminacion',
       range: 'month',
     });
+    expect(parseDashboardUrlState('?tab=infraestructura&range=week')).toEqual({
+      tab: 'infraestructura',
+      range: 'week',
+    });
+    expect(parseDashboardUrlState('?tab=mantenimiento&days=90')).toEqual({
+      tab: 'mantenimiento',
+      range: 'day',
+    });
+    expect(parseDashboardUrlState('?tab=medio-ambiente&days=90')).toEqual({
+      tab: 'medio-ambiente',
+      range: 'day',
+    });
   });
 
   it('falls back to the defaults for unknown or removed values', () => {

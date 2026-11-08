@@ -1,9 +1,12 @@
 # Smart ESI · Estadísticas
 
-Prototipo local de la capa de estadísticas de Smart ESI. La web tiene **dos pestañas**:
+Prototipo local de la capa de estadísticas de Smart ESI. La web tiene **cinco pestañas**:
 
-- **Electricidad** — consumo o coste por edificio y por los cuadros de Fermín Caballero, comparativa de dos periodos y base de consumo del centro cerrado. Usa fechas propias (inicio y fin inclusivos) y calcula la agrupación temporal automáticamente.
+- **Electricidad** — consumo o coste por edificio y por los cuadros de Fermín Caballero, comparativa de varios periodos y base de consumo del centro cerrado. Usa fechas propias (inicio y fin inclusivos) y calcula la agrupación temporal automáticamente.
 - **Iluminación** — reparto entre luminarias y otras cargas, ranking de espacios y despilfarro de luz cuando el edificio está vacío.
+- **Infraestructura** — índice compacto y página por estancia con temperatura, humedad, CO₂ y presencia; fechas propias (7 días por defecto, máximo un año), recuperación térmica, mapa horario y comparación con la media. Incluye gas del edificio y un ambiente de referencia.
+- **Medio Ambiente** — estación meteorológica del centro con temperatura, humedad, presión, partículas y batería; cruces con el sensor interior, AEMET y el consumo energético.
+- **Mantenimiento** — batería, transmisión y cortes por dispositivo para priorizar revisiones, cambios de batería y sustituciones.
 
 El objetivo es convertir los datos del *recorder* de Home Assistant en gráficas sencillas para detectar gasto y decidir actuaciones.
 
@@ -13,6 +16,9 @@ El objetivo es convertir los datos del *recorder* de Home Assistant en gráficas
 | ------- | ------- | --------- | ----- |
 | Electricidad | Real (`statistics`) si `DATA_SOURCE=database`; sintético en `mock` | No aplica | 0,20 €/kWh |
 | Iluminación | Sintético determinista | Real si hay contadores; sintético si no | 0,20 €/kWh |
+| Infraestructura | No aplica | Real (sensores de movimiento/presencia) | Gas real del edificio como contexto |
+| Medio Ambiente | Estación meteorológica real | No aplica | Gas/electricidad del edificio como contexto |
+| Mantenimiento | No aplica | No aplica | No aplica (batería y transmisión) |
 
 - **Solo lectura**: el backend únicamente ejecuta `SELECT` contra la base de datos del recorder.
 - **Fermín Caballero** se obtiene como `Cuadro General − Módulo A − Módulo B`.
@@ -75,8 +81,8 @@ Detalle en [`deploy/README.md`](deploy/README.md).
 ```text
 backend/
   app/
-    api/          Rutas HTTP (Electricidad, Iluminación y metadatos)
-    core/         Configuración, catálogo de edificios y mapa eléctrico
+    api/          Rutas HTTP (Electricidad, Iluminación, Infraestructura, Medio Ambiente y metadatos)
+    core/         Configuración, catálogo de edificios y mapas de datos
     db/           Consultas SELECT y carga de series del recorder
     schemas/      Contratos de respuesta
     services/     Agregación, comparativas y modelo sintético
@@ -86,9 +92,9 @@ frontend/
     api/          Cliente HTTP
     components/   Cabecera, UI reutilizable y gráficas
     context/      Periodo global de Iluminación
-    hooks/        Consultas con TanStack Query
+    hooks/        Consultas con TanStack Query y periodos en la URL
     lib/          Fechas, formato, CSV, paletas y estado de la URL
-    pages/        Página principal
+    pages/        Página principal y rutas de Infraestructura
     types/        Tipos TypeScript
 docs/             Documentación
 ```

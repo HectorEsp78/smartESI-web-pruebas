@@ -1,6 +1,7 @@
 import { buildQuery, getJson } from './http';
 import type {
   ElectricityCompareDto,
+  ElectricityCompareManyDto,
   ElectricityDto,
   ElectricityGranularity,
   ElectricityMetaDto,
@@ -61,4 +62,27 @@ export function fetchElectricityCompare(
 
 export function fetchElectricityMeta(signal?: AbortSignal): Promise<ElectricityMetaDto> {
   return getJson<ElectricityMetaDto>('/api/v1/energy/electricity/meta', signal);
+}
+
+export function fetchElectricityCompareMany(
+  periods: ElectricityPeriod[],
+  granularity: ElectricityGranularity,
+  metric: ElectricityMetric,
+  building: string,
+  sector?: string,
+  signal?: AbortSignal,
+): Promise<ElectricityCompareManyDto> {
+  const params = new URLSearchParams();
+  for (const period of periods) {
+    params.append('start', period.start);
+    params.append('end', period.end);
+  }
+  params.set('granularity', granularity);
+  params.set('metric', metric);
+  params.set('building', building);
+  if (sector) params.set('sector', sector);
+  return getJson<ElectricityCompareManyDto>(
+    `/api/v1/energy/electricity/compare-many?${params.toString()}`,
+    signal,
+  );
 }

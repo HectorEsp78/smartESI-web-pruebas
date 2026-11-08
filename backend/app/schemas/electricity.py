@@ -123,6 +123,48 @@ class ElectricityCompareResponse(BaseModel):
     series: list[ElectricityComparePoint]
 
 
+class ElectricityComparePeriod(BaseModel):
+    """One period inside an N-way comparison."""
+
+    start: date
+    end: date
+    days: int
+    stats: ElectricityStats
+    # Difference of ``stats.total`` against the first period, in percent.
+    delta_pct: float
+    series: list[ElectricityPoint]
+
+
+class ElectricityCompareManyPoint(BaseModel):
+    """One aligned bucket of an N-way comparison.
+
+    ``timestamps`` and ``values`` contain one entry per requested period, in the
+    same order. Entries are ``None`` when a shorter period has no bucket at this
+    position.
+    """
+
+    index: int
+    timestamps: list[datetime | None]
+    values: list[float | None]
+    baseline: float
+
+
+class ElectricityCompareManyResponse(BaseModel):
+    granularity: ElectricityGranularity
+    metric: ElectricityMetric
+    unit: str
+    scope: str
+    scope_label: str
+    building_id: str | None
+    sector_id: str | None
+    periods: list[ElectricityComparePeriod]
+    baseline_hourly: float
+    # False when the periods do not have the same number of buckets; the chart
+    # then aligns them from the start and leaves the missing buckets empty.
+    equal_length: bool
+    series: list[ElectricityCompareManyPoint]
+
+
 class ElectricityBuildingRef(BaseModel):
     id: str
     label: str

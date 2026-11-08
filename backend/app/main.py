@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import electricity, lighting, meta
+from app.api import electricity, environment, lighting, maintenance, meta, weather
 from app.core.config import settings
 from app.schemas.health import HealthLiveResponse, HealthReadyResponse
 
@@ -34,7 +34,7 @@ app = FastAPI(
     title="Smart ESI Stats API",
     description=(
         "Backend API for the Smart ESI statistics module. "
-        "Serves the Electricity and Lighting charts."
+        "Serves the Electricity, Lighting and Infrastructure charts."
     ),
 )
 
@@ -48,8 +48,11 @@ app.add_middleware(
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts())
 
 app.include_router(electricity.router, prefix="/api/v1")
+app.include_router(environment.router, prefix="/api/v1")
 app.include_router(lighting.router, prefix="/api/v1")
+app.include_router(maintenance.router, prefix="/api/v1")
 app.include_router(meta.router, prefix="/api/v1")
+app.include_router(weather.router, prefix="/api/v1")
 
 
 @app.get("/")

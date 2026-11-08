@@ -13,6 +13,14 @@ export const appRoutes = [
     Component: Stats,
   },
   {
+    path: '/infraestructura',
+    Component: Stats,
+  },
+  {
+    path: '/infraestructura/:roomId',
+    Component: Stats,
+  },
+  {
     path: '*',
     Component: NotFound,
   },

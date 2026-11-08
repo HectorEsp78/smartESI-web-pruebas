@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   fetchElectricityCompare,
+  fetchElectricityCompareMany,
   fetchElectricityMeta,
   fetchElectricityStats,
 } from './electricity';
@@ -63,6 +64,40 @@ describe('electricity api', () => {
     expect(String(fetchMock.mock.calls[0][0])).toContain(
       '/api/v1/energy/electricity/meta',
     );
+  });
+
+  it('builds a multi-period comparison URL with repeated start and end params', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await fetchElectricityCompareMany(
+      [
+        { start: '2026-10-01', end: '2026-10-31' },
+        { start: '2025-10-01', end: '2025-10-31' },
+        { start: '2024-10-01', end: '2024-10-31' },
+      ],
+      'day',
+      'cost',
+      'FerminCaballero',
+      'CPD',
+    );
+
+    const calledUrl = new URL(String(fetchMock.mock.calls[0][0]), 'http://localhost');
+    expect(calledUrl.pathname).toBe('/api/v1/energy/electricity/compare-many');
+    expect(calledUrl.searchParams.getAll('start')).toEqual([
+      '2026-10-01',
+      '2025-10-01',
+      '2024-10-01',
+    ]);
+    expect(calledUrl.searchParams.getAll('end')).toEqual([
+      '2026-10-31',
+      '2025-10-31',
+      '2024-10-31',
+    ]);
+    expect(calledUrl.searchParams.get('granularity')).toBe('day');
+    expect(calledUrl.searchParams.get('metric')).toBe('cost');
+    expect(calledUrl.searchParams.get('building')).toBe('FerminCaballero');
+    expect(calledUrl.searchParams.get('sector')).toBe('CPD');
   });
 
   it('surfaces the backend detail on validation errors', async () => {

@@ -168,6 +168,86 @@ class ElectricityEndpointsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("intervalos", response.json()["detail"])
 
+    def test_multi_comparison_overlays_four_years(self):
+        response = client.get(
+            "/api/v1/energy/electricity/compare-many",
+            params=[
+                ("start", "2026-10-01"),
+                ("end", "2026-10-07"),
+                ("start", "2025-10-01"),
+                ("end", "2025-10-07"),
+                ("start", "2024-10-01"),
+                ("end", "2024-10-07"),
+                ("start", "2023-10-01"),
+                ("end", "2023-10-07"),
+                ("granularity", "day"),
+                ("metric", "kwh"),
+                ("building", "ModuloA"),
+            ],
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertEqual(len(body["periods"]), 4)
+        self.assertEqual(len(body["series"]), 7)
+        self.assertTrue(body["equal_length"])
+        self.assertEqual(body["scope"], "ModuloA")
+        self.assertEqual(body["periods"][0]["delta_pct"], 0)
+        for period, year in zip(body["periods"], (2026, 2025, 2024, 2023)):
+            self.assertEqual(period["start"], f"{year}-10-01")
+            self.assertEqual(period["end"], f"{year}-10-07")
+            self.assertGreater(period["stats"]["total"], 0)
+
+        first_point = body["series"][0]
+        self.assertEqual(len(first_point["timestamps"]), 4)
+        self.assertEqual(len(first_point["values"]), 4)
+        self.assertTrue(all(value is not None for value in first_point["values"]))
+        self.assertGreater(body["baseline_hourly"], 0)
+
+    def test_multi_comparison_aligns_periods_with_different_lengths(self):
+        response = client.get(
+            "/api/v1/energy/electricity/compare-many",
+            params=[
+                ("start", "2026-10-01"),
+                ("end", "2026-10-07"),
+                ("start", "2025-10-01"),
+                ("end", "2025-10-05"),
+                ("granularity", "day"),
+                ("metric", "kwh"),
+                ("building", "all"),
+            ],
+        )
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+
+        self.assertFalse(body["equal_length"])
+        self.assertEqual(len(body["series"]), 7)
+        self.assertEqual(len(body["series"][-1]["values"]), 2)
+        self.assertIsNotNone(body["series"][-1]["values"][0])
+        self.assertIsNone(body["series"][-1]["values"][1])
+
+    def test_multi_comparison_requires_two_paired_periods(self):
+        one_period = client.get(
+            "/api/v1/energy/electricity/compare-many",
+            params=[
+                ("start", "2026-10-01"),
+                ("end", "2026-10-07"),
+            ],
+        )
+        self.assertEqual(one_period.status_code, 400)
+        self.assertIn("al menos dos", one_period.json()["detail"])
+
+        unpaired = client.get(
+            "/api/v1/energy/electricity/compare-many",
+            params=[
+                ("start", "2026-10-01"),
+                ("start", "2025-10-01"),
+                ("end", "2025-10-07"),
+            ],
+        )
+        self.assertEqual(unpaired.status_code, 400)
+        self.assertIn("fecha de inicio", unpaired.json()["detail"])
+
 
 class ElectricityHelpersTest(unittest.TestCase):
     def test_calendar_buckets_are_clipped_to_the_inclusive_range(self):

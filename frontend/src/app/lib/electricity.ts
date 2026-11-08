@@ -48,6 +48,27 @@ export function previousYearPeriod(period: DatePeriod): DatePeriod {
   };
 }
 
+/**
+ * Suggest the next period to add to a comparison: the same range one year
+ * before the last period. If that range is already present, keep going back
+ * until an unused one is found so repeated clicks walk through previous years.
+ */
+export function suggestComparisonPeriod(
+  periods: DatePeriod[],
+  fallback: DatePeriod,
+): DatePeriod {
+  const last = periods.length > 0 ? periods[periods.length - 1] : fallback;
+  const base = isValidPeriod(last) ? last : fallback;
+  let candidate = previousYearPeriod(base);
+  const used = new Set(periods.map((period) => `${period.start}|${period.end}`));
+  let guard = 0;
+  while (used.has(`${candidate.start}|${candidate.end}`) && guard < 50) {
+    candidate = previousYearPeriod(candidate);
+    guard += 1;
+  }
+  return candidate;
+}
+
 export function periodDays(period: DatePeriod): number {
   const start = parseISO(period.start);
   const end = parseISO(period.end);

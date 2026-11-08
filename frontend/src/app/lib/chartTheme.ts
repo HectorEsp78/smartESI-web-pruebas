@@ -6,6 +6,27 @@ export const CHART_ACCENT = '#b30139';
 
 export const SERIES_COLORS = ['#0497d7', '#1f6f9a', '#cf6c2e', '#2b8b57', '#b30139'];
 
+// Distinct, accessible colours for comparisons with many periods. The grey
+// dashed line stays reserved for the closed-hours baseline.
+export const COMPARISON_COLORS = [
+  '#0497d7',
+  '#b30139',
+  '#cf6c2e',
+  '#2b8b57',
+  '#7c3aed',
+  '#0891b2',
+  '#4d7c0f',
+  '#be123c',
+  '#1f6f9a',
+  '#a16207',
+  '#6d28d9',
+  '#0f766e',
+];
+
+export function comparisonColor(index: number): string {
+  return COMPARISON_COLORS[index % COMPARISON_COLORS.length];
+}
+
 const BUILDING_COLORS: Record<string, string> = {
   FerminCaballero: '#0497d7',
   ModuloB: '#1f6f9a',

@@ -7,6 +7,7 @@ import {
   isValidPeriod,
   periodDays,
   previousYearPeriod,
+  suggestComparisonPeriod,
 } from './electricity';
 
 describe('electricity date helpers', () => {
@@ -40,6 +41,17 @@ describe('electricity date helpers', () => {
     expect(previousYearPeriod({ start: '2024-02-29', end: '2024-03-01' })).toEqual({
       start: '2023-02-28',
       end: '2023-03-01',
+    });
+  });
+
+  it('suggests the previous year and skips ranges that are already compared', () => {
+    const main = { start: '2026-10-01', end: '2026-10-31' };
+    const previous = { start: '2025-10-01', end: '2025-10-31' };
+
+    expect(suggestComparisonPeriod([main], main)).toEqual(previous);
+    expect(suggestComparisonPeriod([main, previous], main)).toEqual({
+      start: '2024-10-01',
+      end: '2024-10-31',
     });
   });
 
