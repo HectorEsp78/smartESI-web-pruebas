@@ -145,32 +145,3 @@ export interface EnvironmentRoomDetailDto {
   data_source: 'mock' | 'database';
   notes: string[];
 }
-
-export const ENVIRONMENT_QUALITY_LABEL: Record<EnvironmentQuality, string> = {
-  good: 'Bueno',
-  moderate: 'Moderado',
-  poor: 'Malo',
-  bad: 'Muy malo',
-  unknown: 'Sin dato',
-};
-
-export const ENVIRONMENT_QUALITY_ORDER: EnvironmentQuality[] = [
-  'good',
-  'moderate',
-  'poor',
-  'bad',
-  'unknown',
-];
-
-export function worstQuality(...qualities: EnvironmentQuality[]): EnvironmentQuality {
-  const rank: Record<EnvironmentQuality, number> = {
-    good: 0,
-    moderate: 1,
-    poor: 2,
-    bad: 3,
-    unknown: -1,
-  };
-  const known = qualities.filter((quality) => quality !== 'unknown');
-  if (known.length === 0) return 'unknown';
-  return known.reduce((worst, quality) => (rank[quality] > rank[worst] ? quality : worst));
-}

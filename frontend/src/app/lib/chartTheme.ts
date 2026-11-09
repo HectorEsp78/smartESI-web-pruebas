@@ -1,14 +1,10 @@
 import type { CSSProperties } from 'react';
 
-// Institutional palette (see styles/theme.css).
-export const CHART_PRIMARY = '#0497d7';
-export const CHART_ACCENT = '#b30139';
-
-export const SERIES_COLORS = ['#0497d7', '#1f6f9a', '#cf6c2e', '#2b8b57', '#b30139'];
+const SERIES_COLORS = ['#0497d7', '#1f6f9a', '#cf6c2e', '#2b8b57', '#b30139'];
 
 // Distinct, accessible colours for comparisons with many periods. The grey
 // dashed line stays reserved for the closed-hours baseline.
-export const COMPARISON_COLORS = [
+const COMPARISON_COLORS = [
   '#0497d7',
   '#b30139',
   '#cf6c2e',

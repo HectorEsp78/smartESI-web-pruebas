@@ -62,6 +62,16 @@ def _legacy_entities(attribute: str) -> set[str]:
     return entities
 
 
+def _collect_battery_rows(
+    target: dict[str, list[tuple[datetime, str | None, str | None]]],
+    rows: list[tuple[str, int, str, str | None]],
+) -> None:
+    """Add hourly snapshots to ``target``, keyed by entity with naive UTC times."""
+    for entity_id, bucket, state, attributes in rows:
+        at = datetime.fromtimestamp(bucket, tz=timezone.utc).replace(tzinfo=None)
+        target.setdefault(entity_id, []).append((at, state, attributes))
+
+
 async def load_maintenance_data(
     start_utc: datetime,
     end_utc: datetime,
@@ -127,26 +137,12 @@ async def load_maintenance_data(
             battery_rows = await repository.fetch_hourly_state_snapshots(
                 session, regular_battery, end_utc - battery_lookback, end_utc
             )
-            for entity_id, _bucket, state, attributes in battery_rows:
-                battery_snapshots.setdefault(entity_id, []).append(
-                    (
-                        datetime.fromtimestamp(_bucket, tz=timezone.utc).replace(tzinfo=None),
-                        state,
-                        attributes,
-                    )
-                )
+            _collect_battery_rows(battery_snapshots, battery_rows)
         if legacy_battery:
             legacy_rows = await repository.fetch_hourly_state_snapshots(
                 session, sorted(legacy_battery), end_utc - _LEGACY_LOOKBACK, end_utc
             )
-            for entity_id, _bucket, state, attributes in legacy_rows:
-                battery_snapshots.setdefault(entity_id, []).append(
-                    (
-                        datetime.fromtimestamp(_bucket, tz=timezone.utc).replace(tzinfo=None),
-                        state,
-                        attributes,
-                    )
-                )
+            _collect_battery_rows(battery_snapshots, legacy_rows)
 
         # 4. Battery entities with no snapshot in the lookback: keep their last
         # known value so the UI can show how old the reading is.
@@ -173,10 +169,10 @@ async def load_maintenance_data(
                     (last_updated, state, attributes)
                 )
 
-    for values in heartbeat_times.values():
-        values.sort()
-    for values in battery_snapshots.values():
-        values.sort(key=lambda item: item[0])
+    for times in heartbeat_times.values():
+        times.sort()
+    for snapshots in battery_snapshots.values():
+        snapshots.sort(key=lambda item: item[0])
 
     return MaintenanceDatabaseData(
         heartbeat_times=heartbeat_times,

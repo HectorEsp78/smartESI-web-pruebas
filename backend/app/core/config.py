@@ -1,9 +1,9 @@
 """Application settings loaded from environment variables / ``.env``.
 
-Electricity can read the real Home Assistant recorder when
-``DATA_SOURCE=database``; with ``DATA_SOURCE=mock`` both tabs run without a
-database. Lighting consumption always comes from the deterministic model, but
-its occupancy can use the real counters when the recorder is available.
+With ``DATA_SOURCE=database`` the tabs read the real Home Assistant recorder;
+with ``DATA_SOURCE=mock`` (the default) they run without a database. Lighting
+consumption always comes from the deterministic model, but its occupancy can
+use the real counters when the recorder is available.
 """
 
 from typing import Literal
@@ -16,14 +16,15 @@ class Settings(BaseSettings):
 
     # "mock"     -> synthetic data generated on the fly (no database needed).
     # "database" -> read from the real Home Assistant recorder DB (MariaDB).
-    DATA_SOURCE: Literal["mock", "database"] = "database"
+    DATA_SOURCE: Literal["mock", "database"] = "mock"
 
     # --- Home Assistant recorder connection ------------------------------------
+    # Credentials have no usable default: they must come from the environment.
     DB_HOST: str = "127.0.0.1"
     DB_PORT: int = 3306
     DB_NAME: str = "smartesi"
-    DB_USER: str = "smartesi"
-    DB_PASSWORD: str = "smartesi"
+    DB_USER: str = ""
+    DB_PASSWORD: str = ""
     DB_SSL: bool = True
     DB_SSL_CA: str = ""
 

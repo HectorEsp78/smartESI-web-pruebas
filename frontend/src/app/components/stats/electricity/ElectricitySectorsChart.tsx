@@ -24,7 +24,7 @@ import {
   TOOLTIP_STYLE,
   UNMETERED_COLOR,
 } from '../../../lib/chartTheme';
-import { ELECTRICITY_GRANULARITY_NOUN } from '../../../types/electricity';
+import { ELECTRICITY_GRANULARITY_NOUN, FERMIN_BUILDING_ID } from '../../../types/electricity';
 import type { ElectricityDto } from '../../../types/electricity';
 
 interface ElectricitySectorsChartProps {
@@ -47,7 +47,7 @@ export function ElectricitySectorsChart({
   const unit = data?.unit ?? 'kWh';
   const activeSectors = (data?.sectors ?? []).filter((sector) => sector.has_data);
   const unavailableSectors = (data?.sectors ?? []).filter((sector) => !sector.has_data);
-  const fermin = data?.buildings.find((building) => building.building_id === 'FerminCaballero');
+  const fermin = data?.buildings.find((building) => building.building_id === FERMIN_BUILDING_ID);
 
   const rows = (data?.series ?? []).map((point, index) => {
     const row: Record<string, string | number> = { timestamp: point.timestamp };

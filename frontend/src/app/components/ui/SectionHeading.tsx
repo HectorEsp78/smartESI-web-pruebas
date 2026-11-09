@@ -1,6 +1,6 @@
 interface SectionHeadingProps {
   title: string;
-  subtitle: string;
+  subtitle?: string;
 }
 
 export function SectionHeading({ title, subtitle }: SectionHeadingProps) {
@@ -9,7 +9,7 @@ export function SectionHeading({ title, subtitle }: SectionHeadingProps) {
       <h2 className="font-heading text-2xl font-extrabold uppercase tracking-[0.08em] text-accent">
         {title}
       </h2>
-      <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p>
+      {subtitle ? <p className="mt-1 text-sm text-muted-foreground">{subtitle}</p> : null}
     </div>
   );
 }

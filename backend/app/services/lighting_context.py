@@ -45,31 +45,35 @@ def _add_months(value: datetime, months: int) -> datetime:
 
 
 def build_buckets(range_: LightingRange) -> list[Bucket]:
-    """Return the last day/week/month/year as ready-to-plot buckets."""
+    """Return the last day/week/month/year as ready-to-plot buckets.
+
+    The last bucket stops at the end of the current hour: the rest of the day or
+    month has not happened yet and must not be added to the totals.
+    """
     now = local_now()
+    current_hour = _floor_hour(now)
 
     if range_ == "day":
-        last = _floor_hour(now)
         return [
-            Bucket(last - timedelta(hours=i), last - timedelta(hours=i) + timedelta(hours=1))
+            Bucket(current_hour - timedelta(hours=i), current_hour - timedelta(hours=i - 1))
             for i in range(23, -1, -1)
         ]
 
-    if range_ == "week":
-        last = _floor_day(now)
-        days = 7
-    elif range_ == "month":
-        last = _floor_day(now)
-        days = 30
-    else:  # year
+    limit = current_hour + timedelta(hours=1)
+    if range_ == "year":
         last_month = _floor_month(now)
         return [
-            Bucket(_add_months(last_month, -i), _add_months(last_month, -i + 1))
+            Bucket(
+                _add_months(last_month, -i),
+                min(_add_months(last_month, -i + 1), limit),
+            )
             for i in range(11, -1, -1)
         ]
 
+    last_day = _floor_day(now)
+    days = 7 if range_ == "week" else 30
     return [
-        Bucket(last - timedelta(days=i), last - timedelta(days=i) + timedelta(days=1))
+        Bucket(last_day - timedelta(days=i), min(last_day - timedelta(days=i - 1), limit))
         for i in range(days - 1, -1, -1)
     ]
 

@@ -32,6 +32,8 @@ Las variables del backend se leen de `deploy/.env` (el mismo nombre que en
 | -------- | ----------- | --- |
 | `FRONTEND_PORT` | `8080` | Puerto público de nginx. |
 | `BACKEND_PORT` | `8010` | Puerto publicado del backend (para depurar; la web no lo necesita). |
+| `BACKEND_BIND` | `127.0.0.1` | Interfaz de ese puerto. Solo es accesible desde la propia máquina salvo que se cambie. |
+| `APP_ENV` | `production` | En producción se rechaza un CORS vacío o con `*`. |
 | `CORS_ALLOW_ORIGINS` | `http://localhost:8080` | Origen exacto con el que se abre la web. |
 | `DATA_SOURCE` | `database` | `mock` o `database`. |
 | `DB_*` | — | Conexión a MariaDB; requiere VPN de la UCLM si la BD es interna. |

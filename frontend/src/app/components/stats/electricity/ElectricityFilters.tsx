@@ -1,3 +1,4 @@
+import { DateInput } from '../../ui/DateInput';
 import { RangeSelector } from '../../ui/RangeSelector';
 import { SelectField } from '../../ui/SelectField';
 import { formatDateInputLabel, isValidPeriod, todayIso } from '../../../lib/electricity';
@@ -6,6 +7,7 @@ import {
   ELECTRICITY_ALL,
   ELECTRICITY_METRIC_LABEL,
   ELECTRICITY_METRICS,
+  FERMIN_BUILDING_ID,
 } from '../../../types/electricity';
 import type { ElectricityMetaDto, ElectricityMetric } from '../../../types/electricity';
 
@@ -16,6 +18,8 @@ interface ElectricityFiltersProps {
   metric: ElectricityMetric;
   building: string;
   sector: string;
+  /** Effective tariff of the selected period, when the API has measured it. */
+  priceEurPerKwh?: number | null;
   onStartChange: (value: string) => void;
   onEndChange: (value: string) => void;
   onMetricChange: (value: ElectricityMetric) => void;
@@ -28,34 +32,6 @@ const METRIC_OPTIONS = ELECTRICITY_METRICS.map((metric) => ({
   label: ELECTRICITY_METRIC_LABEL[metric],
 }));
 
-function DateInput({
-  label,
-  value,
-  min,
-  max,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  min?: string;
-  max?: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <label className="inline-flex flex-col gap-1 text-xs text-slate-600">
-      <span className="font-semibold uppercase tracking-[0.08em]">{label}</span>
-      <input
-        type="date"
-        value={value}
-        min={min}
-        max={max}
-        onChange={(event) => onChange(event.target.value)}
-        className="rounded-sm border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-primary/40"
-      />
-    </label>
-  );
-}
-
 export function ElectricityFilters({
   meta,
   start,
@@ -63,6 +39,7 @@ export function ElectricityFilters({
   metric,
   building,
   sector,
+  priceEurPerKwh,
   onStartChange,
   onEndChange,
   onMetricChange,
@@ -78,11 +55,11 @@ export function ElectricityFilters({
   const sectorOptions = [
     { value: '', label: 'Todos los sectores medidos' },
     ...(meta?.sectors ?? [])
-      .filter((item) => item.available && item.building_id === 'FerminCaballero')
+      .filter((item) => item.available && item.building_id === FERMIN_BUILDING_ID)
       .map((item) => ({ value: item.id, label: item.label })),
   ];
   const unavailableSectors = (meta?.sectors ?? []).filter(
-    (item) => !item.available && item.building_id === 'FerminCaballero',
+    (item) => !item.available && item.building_id === FERMIN_BUILDING_ID,
   );
   // The recorder start date only constrains real data; mock mode generates
   // synthetic series for any date the user picks.
@@ -115,7 +92,7 @@ export function ElectricityFilters({
           options={buildingOptions}
         />
 
-        {building === 'FerminCaballero' && (
+        {building === FERMIN_BUILDING_ID && (
           <SelectField
             label="Sector"
             value={sector}
@@ -143,9 +120,12 @@ export function ElectricityFilters({
           <strong className="text-slate-700">{formatDateInputLabel(end)}</strong>
         </span>
         {metric === 'cost' && meta && (
-          <span>Precio aplicado: {formatNumber(meta.price_eur_per_kwh, 2)} €/kWh</span>
+          <span>
+            Precio aplicado:{' '}
+            {formatNumber(priceEurPerKwh ?? meta.price_eur_per_kwh, 3)} €/kWh
+          </span>
         )}
-        {building !== 'FerminCaballero' && building !== 'all' && (
+        {building !== FERMIN_BUILDING_ID && building !== ELECTRICITY_ALL && (
           <span>Este edificio solo tiene contador total; no hay desglose por cuadros.</span>
         )}
         {unavailableSectors.length > 0 && (

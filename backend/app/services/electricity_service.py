@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import asyncio
 import bisect
+from collections.abc import Awaitable, Callable, Hashable, Iterator
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
-from typing import Any, Awaitable, Callable, Hashable
+from typing import Any
 
+from app.core.buildings import BUILDINGS_BY_ID
 from app.core.cache import TTLCache
-from app.core.clock import local_tz
+from app.core.clock import elapsed_hours, local_tz, validate_query_dates
 from app.core.config import settings
 from app.core.electricity_map import (
     ELECTRICITY_ALL,
@@ -35,9 +37,9 @@ from app.core.electricity_map import (
     ELECTRICITY_SECTORS,
     ELECTRICITY_SECTORS_BY_BUILDING,
     ELECTRICITY_SECTORS_BY_ID,
+    SITE_COST_ENTITY,
     SITE_ELECTRICITY_STATISTIC,
 )
-from app.core.buildings import BUILDINGS_BY_ID
 from app.schemas.electricity import (
     ElectricityBuildingStats,
     ElectricityCompareManyPoint,
@@ -90,7 +92,8 @@ class _Bucket:
 
     @property
     def hours(self) -> float:
-        return (self.end - self.start).total_seconds() / 3600.0
+        # 23 or 25 on the days the clock changes.
+        return elapsed_hours(self.start, self.end)
 
 
 @dataclass
@@ -102,10 +105,10 @@ class _HourlySeries:
     prefix: list[float]
 
     @classmethod
-    def from_mapping(cls, data: dict[datetime, float] | None) -> "_HourlySeries":
+    def from_mapping(cls, data: dict[datetime, float] | None) -> _HourlySeries:
         if not data:
             return cls([], [], [0.0])
-        items = sorted((hour, value) for hour, value in data.items())
+        items = sorted(data.items())
         hours = [hour for hour, _ in items]
         values = [float(value) for _, value in items]
         prefix = [0.0]
@@ -125,7 +128,7 @@ class _HourlySeries:
         first, last = self._indices(start, end)
         total = 0.0
         count = 0
-        for hour, value in zip(self.hours[first:last], self.values[first:last]):
+        for hour, value in zip(self.hours[first:last], self.values[first:last], strict=True):
             if _is_closed_hour(hour):
                 total += value
                 count += 1
@@ -140,6 +143,9 @@ class _ElectricityData:
     site: dict[datetime, float]
     buildings: dict[str, dict[datetime, float]]
     sectors: dict[str, dict[datetime, float]]
+    # Effective tariff applied by the real main-panel cost counter, when it can
+    # be measured. Falls back to the configured price otherwise.
+    price_eur_per_kwh: float = settings.ENERGY_PRICE_EUR_PER_KWH
 
 
 async def _cached(
@@ -153,9 +159,18 @@ async def _cached(
     return value
 
 
-def _convert(value_kwh: float, metric: ElectricityMetric) -> float:
+def _convert(
+    value_kwh: float,
+    metric: ElectricityMetric,
+    price_eur_per_kwh: float | None = None,
+) -> float:
     if metric == "cost":
-        return value_kwh * settings.ENERGY_PRICE_EUR_PER_KWH
+        price = (
+            price_eur_per_kwh
+            if price_eur_per_kwh is not None
+            else settings.ENERGY_PRICE_EUR_PER_KWH
+        )
+        return value_kwh * price
     return value_kwh
 
 
@@ -236,6 +251,7 @@ def _is_closed_hour(hour: datetime) -> bool:
 
 
 def _validate_range(start: date, end: date) -> None:
+    validate_query_dates(start, end)
     if end < start:
         raise ValueError("La fecha final no puede ser anterior a la fecha inicial.")
     if (end - start).days > MAX_RANGE_DAYS:
@@ -287,7 +303,7 @@ def _assemble_data(raw: dict[str, dict[datetime, float]]) -> _ElectricityData:
     return _ElectricityData(site=site, buildings=buildings, sectors=sectors)
 
 
-def _iter_local_hours(start: datetime, end: datetime):
+def _iter_local_hours(start: datetime, end: datetime) -> Iterator[datetime]:
     """Yield local-aware hours between two aware datetimes (DST-safe)."""
     cursor = start.astimezone(timezone.utc)
     end_utc = end.astimezone(timezone.utc)
@@ -333,7 +349,9 @@ def _mock_data(start: datetime, end: datetime) -> _ElectricityData:
     return _assemble_data(raw)
 
 
-async def _load_database_data(start: datetime, end: datetime) -> _ElectricityData:
+async def _load_database_data(
+    start: datetime, end: datetime, with_price: bool = False
+) -> _ElectricityData:
     # Imported lazily so mock mode never needs SQLAlchemy / a DB driver.
     from app.db import database_data
     from app.db.session import AsyncSessionLocal
@@ -354,14 +372,31 @@ async def _load_database_data(start: datetime, end: datetime) -> _ElectricityDat
         raw = await database_data.load_hourly_statistics(
             session, statistic_to_key, start, end
         )
-    return _assemble_data(raw)
+        data = _assemble_data(raw)
+        if with_price:
+            measured_price = await database_data.estimate_site_energy_price(
+                session, SITE_COST_ENTITY, start, end, data.site
+            )
+            if measured_price is not None:
+                data.price_eur_per_kwh = measured_price
+    return data
 
 
-async def _load_data(start: datetime, end: datetime) -> _ElectricityData:
-    key = ("electricity-data", settings.DATA_SOURCE, start.isoformat(), end.isoformat())
+async def _load_data(
+    start: datetime, end: datetime, with_price: bool = False
+) -> _ElectricityData:
+    key = (
+        "electricity-data",
+        settings.DATA_SOURCE,
+        start.isoformat(),
+        end.isoformat(),
+        with_price,
+    )
     if settings.DATA_SOURCE != "database":
         return await _cached(_data_cache, key, lambda: _mock_data_async(start, end))
-    return await _cached(_data_cache, key, lambda: _load_database_data(start, end))
+    return await _cached(
+        _data_cache, key, lambda: _load_database_data(start, end, with_price)
+    )
 
 
 async def _mock_data_async(start: datetime, end: datetime) -> _ElectricityData:
@@ -397,9 +432,13 @@ def _base_stats(
     metric: ElectricityMetric,
     range_start: datetime,
     range_end: datetime,
+    price_eur_per_kwh: float | None = None,
 ) -> tuple[ElectricityStats, float]:
     """Stats for a scope plus its raw closed-hour baseline (kWh/h)."""
-    values = [_convert(series.sum_between(bucket.start, bucket.end), metric) for bucket in buckets]
+    values = [
+        _convert(series.sum_between(bucket.start, bucket.end), metric, price_eur_per_kwh)
+        for bucket in buckets
+    ]
     total = sum(values)
     average = total / len(values) if values else 0.0
     minimum = min(values) if values else 0.0
@@ -407,7 +446,7 @@ def _base_stats(
 
     closed_total, closed_count = series.closed_totals(range_start, range_end)
     baseline_kwh_hour = closed_total / closed_count if closed_count else 0.0
-    baseline_hourly = _convert(baseline_kwh_hour, metric)
+    baseline_hourly = _convert(baseline_kwh_hour, metric, price_eur_per_kwh)
     total_hours = sum(bucket.hours for bucket in buckets)
     baseline_total = baseline_hourly * total_hours
 
@@ -432,23 +471,27 @@ def _building_stats(
     metric: ElectricityMetric,
     range_start: datetime,
     range_end: datetime,
+    price_eur_per_kwh: float | None = None,
 ) -> list[ElectricityBuildingStats]:
     site_series = _HourlySeries.from_mapping(data.site)
     site_kwh = site_series.sum_between(range_start, range_end)
-    site_total_value = _convert(site_kwh, metric)
+    site_total_value = _convert(site_kwh, metric, price_eur_per_kwh)
 
     result: list[ElectricityBuildingStats] = []
     for building in ELECTRICITY_BUILDINGS:
         series = _HourlySeries.from_mapping(data.buildings.get(building.id))
         values = [
-            _convert(series.sum_between(bucket.start, bucket.end), metric) for bucket in buckets
+            _convert(
+                series.sum_between(bucket.start, bucket.end), metric, price_eur_per_kwh
+            )
+            for bucket in buckets
         ]
         total = sum(values)
         closed_total, closed_count = series.closed_totals(range_start, range_end)
         baseline_kwh_hour = closed_total / closed_count if closed_count else 0.0
-        baseline_total = _convert(baseline_kwh_hour, metric) * sum(
-            bucket.hours for bucket in buckets
-        )
+        baseline_total = _convert(
+            baseline_kwh_hour, metric, price_eur_per_kwh
+        ) * sum(bucket.hours for bucket in buckets)
         result.append(
             ElectricityBuildingStats(
                 building_id=building.id,
@@ -461,7 +504,9 @@ def _building_stats(
                 baseline_total=round(baseline_total, 2),
                 share=round(total / site_total_value, 4) if site_total_value else 0.0,
                 note=building.note,
-                series=_series_points(series, buckets, metric, baseline_kwh_hour),
+                series=_series_points(
+                    series, buckets, metric, baseline_kwh_hour, price_eur_per_kwh
+                ),
             )
         )
     return result
@@ -473,11 +518,12 @@ def _sector_stats(
     metric: ElectricityMetric,
     range_start: datetime,
     range_end: datetime,
+    price_eur_per_kwh: float | None = None,
 ) -> tuple[list[ElectricitySectorStats], float, float, float, float]:
     """Return ``(sectors, fermin_total, sectors_total, unmetered_total, coverage)``."""
     fermin_series = _HourlySeries.from_mapping(data.buildings.get("FerminCaballero"))
     fermin_kwh = fermin_series.sum_between(range_start, range_end)
-    fermin_total = _convert(fermin_kwh, metric)
+    fermin_total = _convert(fermin_kwh, metric, price_eur_per_kwh)
 
     result: list[ElectricitySectorStats] = []
     sectors_kwh = 0.0
@@ -485,7 +531,10 @@ def _sector_stats(
         series = _HourlySeries.from_mapping(data.sectors.get(sector.id))
         has_data = sector.available and series.has_values()
         values = [
-            _convert(series.sum_between(bucket.start, bucket.end), metric) for bucket in buckets
+            _convert(
+                series.sum_between(bucket.start, bucket.end), metric, price_eur_per_kwh
+            )
+            for bucket in buckets
         ]
         total = sum(values)
         if has_data:
@@ -506,11 +555,13 @@ def _sector_stats(
                 share_of_building=round(total / fermin_total, 4) if fermin_total else 0.0,
                 has_data=has_data,
                 note=sector.note,
-                series=_series_points(series, buckets, metric, baseline_kwh_hour),
+                series=_series_points(
+                    series, buckets, metric, baseline_kwh_hour, price_eur_per_kwh
+                ),
             )
         )
 
-    sectors_total = _convert(sectors_kwh, metric)
+    sectors_total = _convert(sectors_kwh, metric, price_eur_per_kwh)
     unmetered_total = max(0.0, fermin_total - sectors_total)
     coverage = sectors_total / fermin_total if fermin_total else 0.0
     return result, fermin_total, sectors_total, unmetered_total, coverage
@@ -521,12 +572,20 @@ def _series_points(
     buckets: list[_Bucket],
     metric: ElectricityMetric,
     baseline_kwh_hour: float,
+    price_eur_per_kwh: float | None = None,
 ) -> list[ElectricityPoint]:
-    baseline_per_hour = _convert(baseline_kwh_hour, metric)
+    baseline_per_hour = _convert(baseline_kwh_hour, metric, price_eur_per_kwh)
     return [
         ElectricityPoint(
             timestamp=bucket.start,
-            value=round(_convert(series.sum_between(bucket.start, bucket.end), metric), 2),
+            value=round(
+                _convert(
+                    series.sum_between(bucket.start, bucket.end),
+                    metric,
+                    price_eur_per_kwh,
+                ),
+                2,
+            ),
             baseline=round(baseline_per_hour * bucket.hours, 2),
         )
         for bucket in buckets
@@ -557,23 +616,29 @@ async def build_electricity(
     )
 
     async def _compute() -> ElectricityResponse:
-        data = await _load_data(range_start, range_end)
+        data = await _load_data(
+            range_start, range_end, with_price=metric == "cost"
+        )
         hourly, scope, scope_label, resolved_building_id, resolved_sector_id = _resolve_scope(
             data, building_id, sector_id
         )
+        price = data.price_eur_per_kwh
         series = _HourlySeries.from_mapping(hourly)
         stats, baseline_kwh_hour = _base_stats(
-            series, buckets, metric, range_start, range_end
+            series, buckets, metric, range_start, range_end, price
         )
-        points = _series_points(series, buckets, metric, baseline_kwh_hour)
+        points = _series_points(series, buckets, metric, baseline_kwh_hour, price)
 
         site_total = _convert(
             _HourlySeries.from_mapping(data.site).sum_between(range_start, range_end),
             metric,
+            price,
         )
-        buildings = _building_stats(data, buckets, metric, range_start, range_end)
+        buildings = _building_stats(
+            data, buckets, metric, range_start, range_end, price
+        )
         sectors, fermin_total, sectors_total, unmetered_total, coverage = _sector_stats(
-            data, buckets, metric, range_start, range_end
+            data, buckets, metric, range_start, range_end, price
         )
 
         return ElectricityResponse(
@@ -596,6 +661,7 @@ async def build_electricity(
             unmetered_total=round(unmetered_total, 2),
             sector_coverage=round(coverage, 4),
             data_start=ELECTRICITY_DATA_START,
+            price_eur_per_kwh=round(price, 4),
         )
 
     return await _cached(_cache, cache_key, _compute)
@@ -640,7 +706,12 @@ async def build_electricity_compare_many(
 
     async def _compute() -> ElectricityCompareManyResponse:
         datasets = await asyncio.gather(
-            *[_load_data(range_start, range_end) for range_start, range_end in range_bounds]
+            *[
+                _load_data(
+                    range_start, range_end, with_price=metric == "cost"
+                )
+                for range_start, range_end in range_bounds
+            ]
         )
 
         series_list: list[_HourlySeries] = []
@@ -653,13 +724,20 @@ async def build_electricity_compare_many(
         resolved_sector_id: str | None = sector_id
 
         for data, buckets, (range_start, range_end) in zip(
-            datasets, bucket_sets, range_bounds
+            datasets, bucket_sets, range_bounds, strict=True
         ):
             hourly, scope, scope_label, resolved_building_id, resolved_sector_id = (
                 _resolve_scope(data, building_id, sector_id)
             )
             series = _HourlySeries.from_mapping(hourly)
-            stats, _ = _base_stats(series, buckets, metric, range_start, range_end)
+            stats, _ = _base_stats(
+                series,
+                buckets,
+                metric,
+                range_start,
+                range_end,
+                data.price_eur_per_kwh,
+            )
             closed_total, closed_count = series.closed_totals(range_start, range_end)
             closed_total_sum += closed_total
             closed_count_sum += closed_count
@@ -669,15 +747,23 @@ async def build_electricity_compare_many(
         baseline_kwh_hour = (
             closed_total_sum / closed_count_sum if closed_count_sum else 0.0
         )
-        baseline_per_hour = _convert(baseline_kwh_hour, metric)
+        # The baseline is only a visual reference; use the first period's tariff.
+        baseline_price = datasets[0].price_eur_per_kwh if datasets else None
+        baseline_per_hour = _convert(baseline_kwh_hour, metric, baseline_price)
         reference_total = stats_list[0].total
 
         compare_periods: list[ElectricityComparePeriod] = []
         points_by_period: list[list[ElectricityPoint]] = []
-        for index, ((start, end), buckets, stats, series) in enumerate(
-            zip(periods, bucket_sets, stats_list, series_list)
+        for data, (start, end), buckets, stats, series in zip(
+            datasets, periods, bucket_sets, stats_list, series_list, strict=True
         ):
-            points = _series_points(series, buckets, metric, baseline_kwh_hour)
+            points = _series_points(
+                series,
+                buckets,
+                metric,
+                baseline_kwh_hour,
+                data.price_eur_per_kwh,
+            )
             delta_pct = (
                 (stats.total - reference_total) / reference_total * 100.0
                 if reference_total
@@ -734,6 +820,7 @@ async def build_electricity_compare_many(
             periods=compare_periods,
             baseline_hourly=round(baseline_per_hour, 4),
             equal_length=len({len(points) for points in points_by_period}) == 1,
+            price_eur_per_kwh=round(baseline_price, 4) if baseline_price else None,
             series=aligned,
         )
 
@@ -802,6 +889,7 @@ async def build_electricity_compare(
         period_b=period_b.stats,
         baseline_hourly=many.baseline_hourly,
         delta_pct=round(delta_pct, 1),
+        price_eur_per_kwh=many.price_eur_per_kwh,
         series=points,
     )
 

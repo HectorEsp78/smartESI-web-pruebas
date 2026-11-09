@@ -29,6 +29,26 @@ from app.core.buildings import BUILDINGS_BY_ID, SPACES_BY_ID
 EnvironmentQuality = Literal["good", "moderate", "poor", "bad", "unknown"]
 
 
+_PRESENCE_ON = frozenset({"sí", "si", "1", "on", "yes", "true"})
+_PRESENCE_OFF = frozenset({"no", "0", "off", "false"})
+
+
+def parse_presence(state: str | None) -> bool | None:
+    """Home Assistant binary and motion states → ``True``/``False``.
+
+    ``sensor.movimiento_*`` uses ``Sí``/``No``; the generic ``sensor.presencia*``
+    entities use ``1``/``0``. Unknown values are not treated as "empty".
+    """
+    if state is None:
+        return None
+    value = state.strip().lower()
+    if value in _PRESENCE_ON:
+        return True
+    if value in _PRESENCE_OFF:
+        return False
+    return None
+
+
 @dataclass(frozen=True)
 class EnvironmentRoomConfig:
     id: str

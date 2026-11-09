@@ -17,7 +17,9 @@ are never modified.
   (CO₂), which has no long-term statistics in this recorder.
 - ``fetch_state_rows`` — raw transitions for motion sensors.
 - ``fetch_latest_state_snapshots`` — last raw value/timestamp for the live cards.
-- ``fetch_state_timestamps`` / ``fetch_last_state_timestamps_before`` — heartbeat
+- ``fetch_latest_numeric_states`` — last valid reading of the battery sensors whose
+  latest row is ``unknown`` or a glitch.
+- ``fetch_state_timestamps`` /``fetch_last_state_timestamps_before`` — heartbeat
   timestamps for the Maintenance tab.
 """
 
@@ -31,6 +33,24 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.ha import State, Statistics, StatisticsMeta
 
 _HOUR_SECONDS = 3600
+
+
+def _latest_state_ids(entity_ids: list[str], before_utc: datetime, lookback: timedelta):
+    """Subquery with the newest ``state_id`` of each entity before ``before_utc``.
+
+    ``MAX(state_id)`` per entity keeps this a set of index lookups instead of a
+    scan of the recorder's ``states`` table.
+    """
+    return (
+        select(func.max(State.state_id).label("max_id"))
+        .where(
+            State.entity_id.in_(entity_ids),
+            State.last_updated < before_utc,
+            State.last_updated >= before_utc - lookback,
+        )
+        .group_by(State.entity_id)
+        .subquery()
+    )
 
 
 async def fetch_statistics_means(
@@ -63,6 +83,7 @@ async def fetch_statistics_means(
     return [
         (statistic_id, start, float(mean))
         for statistic_id, start, mean in result.all()
+        if mean is not None
     ]
 
 
@@ -133,10 +154,7 @@ async def fetch_state_rows(
         .order_by(State.entity_id, State.last_updated)
     )
     result = await session.execute(stmt)
-    return [
-        (entity_id, last_updated, state)
-        for entity_id, last_updated, state in result.all()
-    ]
+    return list(result.tuples().all())
 
 
 async def fetch_state_snapshots(
@@ -170,10 +188,7 @@ async def fetch_state_snapshots(
         .order_by(State.entity_id, State.last_updated)
     )
     result = await session.execute(stmt)
-    return [
-        (entity_id, last_updated, state, attributes)
-        for entity_id, last_updated, state, attributes in result.all()
-    ]
+    return list(result.tuples().all())
 
 
 async def fetch_latest_state_snapshots(
@@ -182,24 +197,11 @@ async def fetch_latest_state_snapshots(
     before_utc: datetime,
     lookback: timedelta,
 ) -> dict[str, tuple[str, str | None, datetime]]:
-    """Latest raw ``(state, attributes, last_updated)`` of each entity.
-
-    The correlated ``MAX(state_id)`` pattern keeps this a set of index lookups
-    instead of a scan of the recorder's ``states`` table.
-    """
+    """Latest raw ``(state, attributes, last_updated)`` of each entity."""
     if not entity_ids:
         return {}
 
-    subq = (
-        select(func.max(State.state_id).label("max_id"))
-        .where(
-            State.entity_id.in_(entity_ids),
-            State.last_updated < before_utc,
-            State.last_updated >= before_utc - lookback,
-        )
-        .group_by(State.entity_id)
-        .subquery()
-    )
+    subq = _latest_state_ids(entity_ids, before_utc, lookback)
     stmt = select(
         State.entity_id, State.state, State.attributes, State.last_updated
     ).join(subq, State.state_id == subq.c.max_id)
@@ -207,6 +209,39 @@ async def fetch_latest_state_snapshots(
     return {
         entity_id: (state, attributes, last_updated)
         for entity_id, state, attributes, last_updated in result.all()
+    }
+
+
+async def fetch_latest_numeric_states(
+    session: AsyncSession,
+    entity_ids: list[str],
+    before_utc: datetime,
+    min_value: float,
+    max_value: float,
+) -> dict[str, tuple[float, datetime]]:
+    """Latest numeric ``state`` within the range of each entity, with its time."""
+    if not entity_ids:
+        return {}
+
+    numeric_state = cast(State.state, Numeric(12, 3))
+    latest = (
+        select(func.max(State.state_id).label("max_id"))
+        .where(
+            State.entity_id.in_(entity_ids),
+            State.last_updated < before_utc,
+            State.state.op("REGEXP")(r"^-?[0-9]+(\.[0-9]+)?$"),
+            numeric_state.between(min_value, max_value),
+        )
+        .group_by(State.entity_id)
+        .subquery()
+    )
+    stmt = select(State.entity_id, State.state, State.last_updated).join(
+        latest, State.state_id == latest.c.max_id
+    )
+    result = await session.execute(stmt)
+    return {
+        entity_id: (float(state), last_updated)
+        for entity_id, state, last_updated in result.all()
     }
 
 
@@ -235,7 +270,7 @@ async def fetch_state_timestamps(
         .order_by(State.entity_id, State.last_updated)
     )
     result = await session.execute(stmt)
-    return [(entity_id, last_updated) for entity_id, last_updated in result.all()]
+    return list(result.tuples().all())
 
 
 async def fetch_last_state_timestamps_before(
@@ -247,30 +282,17 @@ async def fetch_last_state_timestamps_before(
     """Last ``last_updated`` of each entity before ``before_utc``.
 
     Maintenance uses this only for devices that produced no heartbeat inside the
-    selected period, so a long lookback (legacy valves) is cheap: it is one
-    correlated ``MAX(state_id)`` lookup per entity.
+    selected period, so a long lookback (legacy valves) stays cheap.
     """
     if not entity_ids:
         return {}
 
-    subq = (
-        select(func.max(State.state_id).label("max_id"))
-        .where(
-            State.entity_id.in_(entity_ids),
-            State.last_updated < before_utc,
-            State.last_updated >= before_utc - lookback,
-        )
-        .group_by(State.entity_id)
-        .subquery()
-    )
+    subq = _latest_state_ids(entity_ids, before_utc, lookback)
     stmt = select(State.entity_id, State.last_updated).join(
         subq, State.state_id == subq.c.max_id
     )
     result = await session.execute(stmt)
-    return {
-        entity_id: last_updated
-        for entity_id, last_updated in result.all()
-    }
+    return dict(result.tuples().all())
 
 
 async def fetch_statistics_sums(
@@ -299,7 +321,11 @@ async def fetch_statistics_sums(
         .order_by(StatisticsMeta.statistic_id, Statistics.start)
     )
     result = await session.execute(stmt)
-    return [(statistic_id, start, float(total)) for statistic_id, start, total in result.all()]
+    return [
+        (statistic_id, start, float(total))
+        for statistic_id, start, total in result.all()
+        if total is not None
+    ]
 
 
 async def fetch_last_state_snapshots_before(
@@ -310,23 +336,13 @@ async def fetch_last_state_snapshots_before(
 ) -> dict[str, tuple[str, str | None]]:
     """Last raw ``(state, attributes)`` of each entity before ``before_utc``.
 
-    The canonical Home Assistant pattern is a correlated ``MAX(state_id)`` per
-    entity. Returns the raw strings because some counters live in the JSON
-    ``attributes`` column.
+    Returns the raw strings because some counters live in the JSON ``attributes``
+    column.
     """
     if not entity_ids:
         return {}
 
-    subq = (
-        select(func.max(State.state_id).label("max_id"))
-        .where(
-            State.entity_id.in_(entity_ids),
-            State.last_updated < before_utc,
-            State.last_updated >= before_utc - lookback,
-        )
-        .group_by(State.entity_id)
-        .subquery()
-    )
+    subq = _latest_state_ids(entity_ids, before_utc, lookback)
     stmt = select(State.entity_id, State.state, State.attributes).join(
         subq, State.state_id == subq.c.max_id
     )

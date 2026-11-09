@@ -36,8 +36,6 @@ from app.services.lighting_context import (
     scope_buildings,
 )
 
-DAYS_BY_RANGE: dict[LightingRange, int] = {"day": 1, "week": 7, "month": 30, "year": 365}
-
 _cache = TTLCache(ttl_seconds=settings.STATS_CACHE_TTL_SECONDS)
 
 
@@ -54,6 +52,8 @@ class _Accumulated:
     lighting_total: float = 0.0
     other_total: float = 0.0
     total: float = 0.0
+    # Days really covered by the buckets, used to annualize the waste.
+    days: float = 0.0
     building_totals: dict[str, float] = field(default_factory=dict)
     spaces: dict[str, _SpaceAcc] = field(default_factory=dict)
 
@@ -76,7 +76,7 @@ async def _compute(range_: LightingRange, building_id: str) -> _Accumulated:
         scope, buckets[0].start, buckets[-1].end
     )
 
-    result = _Accumulated()
+    result = _Accumulated(days=(buckets[-1].end - buckets[0].start) / timedelta(days=1))
     for building in scope:
         result.building_totals[building.id] = 0.0
         for space in SPACES_BY_BUILDING.get(building.id, []):
@@ -212,7 +212,7 @@ async def build_waste(
     range_: LightingRange, building_id: str
 ) -> LightingWasteResponse:
     data = await _accumulate(range_, building_id)
-    days = DAYS_BY_RANGE[range_]
+    days = data.days
     price = settings.ENERGY_PRICE_EUR_PER_KWH
 
     spaces: list[LightingWasteSpace] = []
@@ -238,7 +238,7 @@ async def build_waste(
                 cost_eur=round(cost, 2),
                 annualized_cost_eur=round(cost * (365.0 / days), 2),
                 empty_hours=round(acc.empty_hours, 0),
-                avg_daily_empty_cost=round(cost / days, 2) if days else 0.0,
+                avg_daily_empty_cost=round(cost / days, 2),
             )
         )
 
@@ -252,7 +252,7 @@ async def build_waste(
         waste_share=round(waste_total / data.lighting_total, 4) if data.lighting_total else 0.0,
         waste_cost_eur=round(waste_cost, 2),
         annualized_cost_eur=round(waste_cost * (365.0 / days), 2),
-        avg_daily_empty_cost=round(waste_cost / days, 2) if days else 0.0,
+        avg_daily_empty_cost=round(waste_cost / days, 2),
         spaces=spaces,
     )
 

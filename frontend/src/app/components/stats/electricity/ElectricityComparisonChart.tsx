@@ -15,6 +15,7 @@ import {
   ELECTRICITY_TICK_PATTERN,
   ELECTRICITY_TOOLTIP_PATTERN,
   formatDateInputLabel,
+  formatDayCount,
   formatElectricityValue,
   formatPeriod,
   isValidPeriod,
@@ -269,7 +270,7 @@ function ComparisonTable({ data }: { data: ElectricityCompareManyDto }) {
                   {formatPeriod({ start: period.start, end: period.end })}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2.5 text-right text-slate-600">
-                  {period.days} días
+                  {formatDayCount(period.days)}
                 </td>
                 <td className="whitespace-nowrap px-3 py-2.5 text-right font-semibold text-slate-900">
                   {formatElectricityValue(period.stats.total, data.unit)}
@@ -318,7 +319,7 @@ function ComparisonBody({ data }: { data: ElectricityCompareManyDto }) {
         <StatCard
           label="Periodo de referencia"
           value={formatElectricityValue(reference.stats.total, data.unit)}
-          hint={`${formatPeriod({ start: reference.start, end: reference.end })} (${reference.days} días)`}
+          hint={`${formatPeriod({ start: reference.start, end: reference.end })} (${formatDayCount(reference.days)})`}
           tone="primary"
         />
         <StatCard
@@ -399,7 +400,7 @@ function ComparisonBody({ data }: { data: ElectricityCompareManyDto }) {
 
       {!data.equal_length && (
         <p className="rounded-sm border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          Los periodos no tienen la misma duración ({data.periods.map((period) => `${period.days} días`).join(', ')}).
+          Los periodos no tienen la misma duración ({data.periods.map((period) => formatDayCount(period.days)).join(', ')}).
           La gráfica los alinea desde su fecha inicial y deja vacíos los intervalos que no existen;
           la comparación de totales es informativa.
         </p>
@@ -499,8 +500,8 @@ export function ElectricityComparisonChart({
               Comparar periodos
             </h3>
             <p className="text-xs text-muted-foreground">
-              Añade todos los periodos que quieras y compáralos en la misma gráfica. Cada periodo
-              tiene sus propias fechas y la variación se calcula frente al periodo 1.
+              Añade hasta {MAX_COMPARISON_PERIODS} periodos y compáralos en la misma gráfica. Cada
+              periodo tiene sus propias fechas y la variación se calcula frente al periodo 1.
             </p>
             {isFetching && query && (
               <p className="mt-1 text-xs font-semibold text-primary">Actualizando comparativa…</p>

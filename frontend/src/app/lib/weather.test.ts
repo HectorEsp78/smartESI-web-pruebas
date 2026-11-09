@@ -1,156 +1,118 @@
 import { describe, expect, it } from 'vitest';
 import {
-  aemetExposureLabel,
-  currentStatusLabel,
-  currentStatusTone,
-  formatAgeHours,
-  formatBattery,
+  aemetNotice,
+  formatAge,
   formatCorrelation,
-  formatHours,
   formatHumidity,
-  formatKm,
-  formatMm,
   formatPmIndex,
-  formatPressure,
   formatSigned,
-  formatSignedPressure,
-  formatSignedTemperature,
   formatTemperature,
-  parseWeatherDays,
-  pressureTrendLabel,
-  weatherDaysLabel,
+  solarExposureHint,
+  weatherPeriodError,
 } from './weather';
-import type { WeatherAemetCrossDto } from '../types/weather';
+import type { AemetAvailabilityDto, AemetLatestDto } from '../types/weather';
 
-function aemet(
-  overrides: Partial<WeatherAemetCrossDto> = {},
-): WeatherAemetCrossDto {
+function availability(overrides: Partial<AemetAvailabilityDto> = {}): AemetAvailabilityDto {
   return {
-    available: true,
-    stale: false,
-    samples: 24,
-    last_updated: '2026-11-01T10:00:00Z',
-    temperature_bias_c: 2,
-    temperature_mae_c: 2.4,
-    temperature_correlation: 0.9,
-    humidity_bias_pct: -5,
-    humidity_mae_pct: 6,
-    humidity_correlation: 0.8,
-    pressure_bias_hpa: -2.3,
-    pressure_correlation: 0.99,
-    daytime_temperature_bias_c: 5.1,
-    nighttime_temperature_bias_c: 0.3,
-    precipitation_mm: 0,
-    visibility_min_km: 10,
-    hourly_bias: [],
+    coverage: 'complete',
+    period_hours: 100,
+    observed_hours: 100,
+    compared_hours: 100,
+    coverage_pct: 100,
+    first_observation: '2026-10-01T00:00:00Z',
+    last_observation: '2026-10-05T00:00:00Z',
+    gaps: [],
     ...overrides,
   };
 }
 
-describe('weather period', () => {
-  it('accepts only 7, 30 or 90 days and defaults to 30', () => {
-    expect(parseWeatherDays('7')).toBe(7);
-    expect(parseWeatherDays('90')).toBe(90);
-    expect(parseWeatherDays('14')).toBe(30);
-    expect(parseWeatherDays(null)).toBe(30);
-  });
-
-  it('labels the selected window', () => {
-    expect(weatherDaysLabel(7)).toBe('Últimos 7 días');
-    expect(weatherDaysLabel(30)).toBe('Últimos 30 días');
-    expect(weatherDaysLabel(90)).toBe('Últimos 90 días');
-  });
-});
+function latest(overrides: Partial<AemetLatestDto> = {}): AemetLatestDto {
+  return {
+    temperature_c: 20,
+    humidity_pct: 40,
+    pressure_hpa: 948,
+    observed_at: '2026-10-29T17:00:00Z',
+    age_hours: 1,
+    stale: false,
+    ...overrides,
+  };
+}
 
 describe('weather formatting', () => {
-  it('formats the station metrics with Spanish separators', () => {
+  it('formats values and missing data', () => {
     expect(formatTemperature(21.55)).toBe('21,6 °C');
-    expect(formatHumidity(47.2)).toBe('47,2 %');
-    expect(formatPressure(1013.25)).toBe('1013,3 hPa');
-    expect(formatPmIndex(1234)).toBe('1234');
-    expect(formatBattery(85.4)).toBe('85 %');
-    expect(formatCorrelation(-0.575)).toBe('-0,58');
-  });
-
-  it('handles missing values consistently', () => {
     expect(formatTemperature(null)).toBe('—');
-    expect(formatHumidity(null)).toBe('—');
-    expect(formatPressure(null)).toBe('—');
-    expect(formatPmIndex(null)).toBe('—');
-    expect(formatBattery(null)).toBe('—');
-    expect(formatCorrelation(null)).toBe('—');
-    expect(formatMm(null)).toBe('—');
-    expect(formatKm(null)).toBe('—');
+    expect(formatHumidity(47.2)).toBe('47,2 %');
+    expect(formatPmIndex(4384.4)).toBe('4384');
+    expect(formatCorrelation(0.976)).toBe('0,98');
   });
 
-  it('formats durations at minute, hour and day scale', () => {
-    expect(formatHours(0.5)).toBe('30 min');
-    expect(formatHours(3.5)).toBe('3,5 h');
-    expect(formatHours(72)).toBe('3,0 d');
-    expect(formatHours(null)).toBe('—');
-    expect(formatAgeHours(0.5)).toBe('30 min');
-    expect(formatAgeHours(3.5)).toBe('3,5 h');
+  it('shows the sign of a difference', () => {
+    expect(formatSigned(2.5, '°C')).toBe('+2,5 °C');
+    expect(formatSigned(-2.3, 'hPa')).toBe('-2,3 hPa');
+    expect(formatSigned(null, '°C')).toBe('—');
   });
 
-  it('formats signed values and pressure trends', () => {
-    expect(formatSigned(2.34)).toBe('+2,3');
-    expect(formatSigned(-2.34)).toBe('-2,3');
-    expect(formatSigned(null)).toBe('—');
-    expect(formatSignedPressure(1.2)).toBe('+1,2 hPa');
-    expect(formatSignedTemperature(-3.9)).toBe('-3,9 °C');
-    expect(pressureTrendLabel(1)).toBe('Subiendo');
-    expect(pressureTrendLabel(-1)).toBe('Bajando');
-    expect(pressureTrendLabel(0.2)).toBe('Estable');
-    expect(pressureTrendLabel(null)).toBe('Sin datos');
+  it('adapts the age to its size', () => {
+    expect(formatAge(0.5)).toBe('30 min');
+    expect(formatAge(5)).toBe('5,0 h');
+    expect(formatAge(264)).toBe('11 días');
   });
 });
 
-describe('weather status', () => {
-  it('maps station status to a label and tone', () => {
-    expect(currentStatusLabel('ok')).toBe('En directo');
-    expect(currentStatusLabel('stale')).toBe('Datos desfasados');
-    expect(currentStatusLabel('missing')).toBe('Sin datos');
-    expect(currentStatusTone('ok')).toBe('success');
-    expect(currentStatusTone('stale')).toBe('warning');
-    expect(currentStatusTone('missing')).toBe('neutral');
+describe('weather period', () => {
+  it('rejects reversed, future and too long periods', () => {
+    expect(weatherPeriodError({ start: '2026-10-10', end: '2026-10-01' })).toContain('anterior');
+    expect(weatherPeriodError({ start: '2099-01-01', end: '2099-01-02' })).toContain('futura');
+    expect(weatherPeriodError({ start: '2024-01-01', end: '2025-12-31' })).toContain('366');
   });
 });
 
-describe('AEMET exposure hint', () => {
-  it('flags a much larger daytime bias', () => {
-    expect(aemetExposureLabel(aemet())).toContain('Posible exposición solar');
+describe('aemetNotice', () => {
+  it('stays quiet when the whole period can be compared', () => {
+    expect(aemetNotice(availability(), latest())).toBeNull();
   });
 
-  it('flags a larger nighttime bias', () => {
-    expect(
-      aemetExposureLabel(
-        aemet({
-          daytime_temperature_bias_c: 1,
-          nighttime_temperature_bias_c: 4,
-        }),
-      ),
-    ).toContain('sesgo nocturno');
+  it('warns when there is nothing to compare, and says until when there was', () => {
+    const notice = aemetNotice(
+      availability({ coverage: 'none', compared_hours: 0, coverage_pct: 0 }),
+      latest({ stale: true }),
+    );
+    expect(notice?.tone).toBe('warning');
+    expect(notice?.title).toContain('No hay datos de AEMET');
+    expect(notice?.detail).toContain('2026');
   });
 
-  it('does not over-interpret a small difference', () => {
-    expect(
-      aemetExposureLabel(
-        aemet({
-          daytime_temperature_bias_c: 1,
-          nighttime_temperature_bias_c: 1,
-        }),
-      ),
-    ).toContain('Sin un sesgo');
+  it('reports the coverage and the gaps of a partial comparison', () => {
+    const notice = aemetNotice(
+      availability({
+        coverage: 'partial',
+        compared_hours: 365,
+        coverage_pct: 38.5,
+        gaps: [
+          { start: '2026-10-29T18:00:00Z', end: '2026-11-09T09:00:00Z', hours: 256 },
+          { start: '2026-10-24T01:00:00Z', end: '2026-10-24T06:00:00Z', hours: 6 },
+        ],
+      }),
+      latest(),
+    );
+    expect(notice?.title).toContain('39 %');
+    expect(notice?.detail).toContain('365 horas');
+    expect(notice?.detail).toContain('2 huecos');
+    expect(notice?.detail).toContain('11 días');
   });
 
-  it('returns null when the hourly biases are missing', () => {
-    expect(
-      aemetExposureLabel(
-        aemet({
-          daytime_temperature_bias_c: null,
-          nighttime_temperature_bias_c: null,
-        }),
-      ),
-    ).toBeNull();
+  it('points out a past period that is complete while AEMET has stopped', () => {
+    const notice = aemetNotice(availability(), latest({ stale: true }));
+    expect(notice?.tone).toBe('info');
+    expect(notice?.title).toContain('no se está actualizando');
+  });
+});
+
+describe('solarExposureHint', () => {
+  it('only appears with a clearly warmer day', () => {
+    expect(solarExposureHint(3.4, 1.4)).toContain('sol directo');
+    expect(solarExposureHint(0.4, 0.8)).toBeNull();
+    expect(solarExposureHint(null, 0.8)).toBeNull();
   });
 });

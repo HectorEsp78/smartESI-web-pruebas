@@ -1,5 +1,7 @@
 import logging
 import os
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
@@ -12,8 +14,6 @@ from app.api import electricity, environment, lighting, maintenance, meta, weath
 from app.core.config import settings
 from app.schemas.health import HealthLiveResponse, HealthReadyResponse
 
-SERVICE_NAME = "smartesi-stats-backend"
-
 logger = logging.getLogger(__name__)
 
 
@@ -22,7 +22,10 @@ def _service_version() -> str:
 
 
 def _trusted_hosts() -> list[str]:
-    trusted = {"localhost", "127.0.0.1", "::1", "testserver", "test"}
+    trusted = {"localhost", "127.0.0.1", "::1"}
+    if not settings.is_production:
+        # Host names used by the HTTP test clients.
+        trusted |= {"testserver", "test"}
     for origin in settings.cors_allow_origins:
         host = urlparse(origin).hostname
         if host:
@@ -30,20 +33,31 @@ def _trusted_hosts() -> list[str]:
     return sorted(trusted)
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    yield
+    # Close the pooled connections when running against the recorder DB.
+    if settings.DATA_SOURCE == "database":
+        from app.db.session import engine
+
+        await engine.dispose()
+
+
 app = FastAPI(
     title="Smart ESI Stats API",
     description=(
-        "Backend API for the Smart ESI statistics module. "
-        "Serves the Electricity, Lighting and Infrastructure charts."
+        "Read-only API of the Smart ESI statistics module: electricity, lighting, "
+        "room environment, weather station and device maintenance."
     ),
+    lifespan=_lifespan,
 )
 
+# The API is public and read-only: it uses no cookies and only answers GET.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allow_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET"],
+    allow_headers=["Accept"],
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts())
 
@@ -95,23 +109,23 @@ async def health_ready() -> HealthReadyResponse | JSONResponse:
     return HealthReadyResponse(status="ok", checks={"data_source": "ok"})
 
 
-@app.on_event("shutdown")
-async def _dispose_database_engine() -> None:
-    """Close the pooled DB connections when running against the recorder DB."""
-    if settings.DATA_SOURCE != "database":
-        return
-    from app.db.session import engine
-
-    await engine.dispose()
-
-
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(
     _request: Request, _exc: RequestValidationError
 ) -> JSONResponse:
-    return JSONResponse(status_code=422, content={"detail": "Validation failed"})
+    return JSONResponse(
+        status_code=422,
+        content={"detail": "Los parámetros de la petición no son válidos."},
+    )
 
 
 @app.exception_handler(Exception)
-async def unhandled_exception_handler(_request: Request, _exc: Exception) -> JSONResponse:
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    # Keep the details out of the response, but never lose them.
+    logger.error(
+        "Unhandled error in %s %s", request.method, request.url.path, exc_info=exc
+    )
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Error interno del servidor."},
+    )

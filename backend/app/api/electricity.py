@@ -136,7 +136,7 @@ async def get_electricity_compare_many(
         )
     try:
         return await electricity_service.build_electricity_compare_many(
-            list(zip(start, end)),
+            list(zip(start, end, strict=True)),
             granularity=granularity,
             metric=metric,
             building=building,

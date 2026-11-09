@@ -20,7 +20,33 @@ database = [
 ]
 test = [
     "httpx>=0.27.0",
+    # The API tests also compile the recorder queries.
+    "sqlalchemy>=2.0.29",
+    "aiomysql>=0.2.0",
+    "greenlet>=3.0.0",
+]
+dev = [
+    "ruff>=0.6.0",
+    "mypy>=1.11.0",
 ]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM"]
+ignore = [
+    "E501",   # Long Spanish user-facing messages are clearer on one line.
+    "B008",   # ``Query(...)`` in argument defaults is how FastAPI declares parameters.
+    "SIM108", # A ternary is not always clearer than an if/else block.
+]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["app"]
+ignore_missing_imports = true
+warn_unused_ignores = true

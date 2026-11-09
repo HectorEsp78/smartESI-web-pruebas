@@ -11,7 +11,11 @@ import {
   isValidPeriod,
 } from '../../../lib/electricity';
 import { formatNumber } from '../../../lib/format';
-import { DEFAULT_ELECTRICITY_METRIC, ELECTRICITY_ALL } from '../../../types/electricity';
+import {
+  DEFAULT_ELECTRICITY_METRIC,
+  ELECTRICITY_ALL,
+  FERMIN_BUILDING_ID,
+} from '../../../types/electricity';
 import type { ElectricityMetric } from '../../../types/electricity';
 
 export function ElectricityDashboard() {
@@ -30,7 +34,7 @@ export function ElectricityDashboard() {
         granularity,
         metric,
         building,
-        sector: building === 'FerminCaballero' && sector ? sector : undefined,
+        sector: building === FERMIN_BUILDING_ID && sector ? sector : undefined,
       }
     : null;
   const statsResult = useElectricityStats(query);
@@ -40,7 +44,7 @@ export function ElectricityDashboard() {
 
   const changeBuilding = (value: string) => {
     setBuilding(value);
-    if (value !== 'FerminCaballero') setSector('');
+    if (value !== FERMIN_BUILDING_ID) setSector('');
   };
 
   const dataSource = metaResult.data?.data_source;
@@ -50,16 +54,24 @@ export function ElectricityDashboard() {
       : dataSource === 'mock'
         ? 'Datos simulados: el backend está en modo mock.'
         : 'Datos servidos por el backend configurado.';
-  const priceLabel = metaResult.data
-    ? `${formatNumber(metaResult.data.price_eur_per_kwh, 2)} €/kWh`
-    : '0,20 €/kWh';
+  const appliedPrice =
+    statsData?.price_eur_per_kwh ?? metaResult.data?.price_eur_per_kwh ?? null;
+  const priceLabel = appliedPrice !== null ? `${formatNumber(appliedPrice, 3)} €/kWh` : '—';
 
   return (
     <div className="space-y-6">
       <p className="max-w-4xl text-sm text-slate-600">
-        <strong>{sourceLabel}</strong> El coste se calcula a <strong>{priceLabel}</strong>. Fermín
-        Caballero se obtiene como Cuadro General − Módulo A − Módulo B; los cuadros de planta y el
-        CPD son subcontadores parciales de ese edificio.
+        <strong>{sourceLabel}</strong>{' '}
+        {metric === 'cost' ? (
+          <>
+            El coste se calcula con la tarifa real del cuadro general (
+            <strong>{priceLabel}</strong>).
+          </>
+        ) : (
+          <>Cambia a «Coste» para ver el importe con la tarifa real del cuadro general.</>
+        )}{' '}
+        Fermín Caballero se obtiene como Cuadro General − Módulo A − Módulo B; los cuadros de
+        planta y el CPD son subcontadores parciales de ese edificio.
       </p>
 
       <ElectricityFilters
@@ -69,6 +81,7 @@ export function ElectricityDashboard() {
         metric={metric}
         building={building}
         sector={sector}
+        priceEurPerKwh={appliedPrice}
         onStartChange={(start) => setPeriod((current) => ({ ...current, start }))}
         onEndChange={(end) => setPeriod((current) => ({ ...current, end }))}
         onMetricChange={setMetric}
@@ -106,7 +119,7 @@ export function ElectricityDashboard() {
         granularity={granularity}
         metric={metric}
         building={building}
-        sector={building === 'FerminCaballero' ? sector : ''}
+        sector={building === FERMIN_BUILDING_ID ? sector : ''}
         stats={statsData}
         meta={metaResult.data}
       />

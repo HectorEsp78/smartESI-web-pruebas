@@ -77,6 +77,7 @@ Otros comandos del frontend:
 
 ```bash
 npm run typecheck      # comprobación de tipos
+npm run lint           # reglas de calidad y accesibilidad
 npm run test:run       # tests una pasada
 npm run build          # build de producción -> dist/
 npm run preview        # sirve el build

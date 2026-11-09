@@ -1,140 +1,121 @@
-import { StatCard } from '../../ui/StatCard';
-import { formatNumber, formatTimestamp } from '../../../lib/format';
+import type { ReactNode } from 'react';
+import { formatTimestamp } from '../../../lib/format';
 import {
+  AEMET_COLOR,
+  STATION_COLOR,
   currentStatusLabel,
-  currentStatusTone,
-  formatAgeHours,
-  formatBattery,
-  formatCorrelation,
+  formatAge,
   formatHumidity,
+  formatPercent,
   formatPmIndex,
   formatPressure,
-  formatSignedPressure,
   formatTemperature,
-  pressureTrendLabel,
 } from '../../../lib/weather';
-import type { WeatherCurrentDto } from '../../../types/weather';
+import type { AemetLatestDto, WeatherCurrentDto } from '../../../types/weather';
 
 interface WeatherCurrentProps {
   current: WeatherCurrentDto;
+  aemet: AemetLatestDto;
 }
 
-const STATUS_CLASS: Record<'success' | 'warning' | 'neutral', string> = {
-  success: 'border-success/30 bg-success/10 text-success',
-  warning: 'border-warning/40 bg-warning/10 text-warning',
-  neutral: 'border-slate-300 bg-slate-100 text-slate-600',
-};
-
-export function WeatherCurrent({ current }: WeatherCurrentProps) {
-  const tone = currentStatusTone(current.status);
-
+function SourceCard({
+  title,
+  subtitle,
+  color,
+  badge,
+  badgeWarning,
+  temperature,
+  humidity,
+  pressure,
+  footer,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  color: string;
+  badge: string;
+  badgeWarning: boolean;
+  temperature: number | null;
+  humidity: number | null;
+  pressure: string;
+  footer: string;
+  children?: ReactNode;
+}) {
   return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-slate-200 bg-white p-5">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-              Estación meteorológica · weather.meteo
-            </p>
-            <div className="mt-2 flex flex-wrap items-end gap-4">
-              <p className="font-heading text-5xl font-bold text-slate-900">
-                {formatTemperature(current.temperature_c)}
-              </p>
-              <div className="pb-1 text-sm text-slate-600">
-                <p>{formatHumidity(current.humidity_pct)} de humedad</p>
-                <p>{formatPressure(current.pressure_hpa)} a nivel del mar</p>
-                <p className="text-xs text-slate-500">
-                  {formatPressure(current.pressure_station_hpa)} a nivel de la estación
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="flex flex-col items-end gap-2 text-right">
+    <div className="rounded-md border border-slate-200 bg-white p-5">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="flex items-center gap-2 font-heading text-sm font-semibold text-slate-900">
             <span
-              className={`rounded-sm border px-2 py-1 text-xs font-semibold ${STATUS_CLASS[tone]}`}
-            >
-              {currentStatusLabel(current.status)}
-            </span>
-            <p className="text-xs text-slate-500">
-              {current.last_updated
-                ? `Actualizado ${formatTimestamp(current.last_updated, 'd MMM HH:mm')}`
-                : 'Sin lectura'}
-            </p>
-            {current.age_hours !== null && (
-              <p className="text-xs text-slate-500">
-                Hace {formatAgeHours(current.age_hours)}
-              </p>
-            )}
-          </div>
+              className="h-2.5 w-2.5 rounded-full"
+              style={{ backgroundColor: color }}
+              aria-hidden="true"
+            />
+            {title}
+          </p>
+          <p className="text-xs text-muted-foreground">{subtitle}</p>
         </div>
-
-        <div className="mt-4 grid gap-3 border-t border-slate-100 pt-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <p className="text-xs text-slate-500">Punto de rocío</p>
-            <p className="font-semibold text-slate-900">
-              {formatTemperature(current.dew_point_c)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Humedad absoluta</p>
-            <p className="font-semibold text-slate-900">
-              {current.absolute_humidity_g_m3 === null
-                ? '—'
-                : `${formatNumber(current.absolute_humidity_g_m3, 1)} g/m³`}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Sensación térmica</p>
-            <p className="font-semibold text-slate-900">
-              {formatTemperature(current.heat_index_c)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Tendencia de presión (3 h)</p>
-            <p className="font-semibold text-slate-900">
-              {pressureTrendLabel(current.pressure_trend_3h_hpa)} ·{' '}
-              {formatSignedPressure(current.pressure_trend_3h_hpa)}
-            </p>
-          </div>
-        </div>
+        <span
+          className={`rounded-sm border px-2 py-0.5 text-xs font-semibold ${
+            badgeWarning
+              ? 'border-amber-200 bg-amber-50 text-amber-800'
+              : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          }`}
+        >
+          {badge}
+        </span>
       </div>
+      <p className="mt-3 font-heading text-4xl font-bold text-slate-900">
+        {formatTemperature(temperature)}
+      </p>
+      <p className="mt-1 text-sm text-slate-600">
+        {formatHumidity(humidity)} de humedad · {pressure}
+      </p>
+      {children}
+      <p className="mt-2 text-xs text-slate-500">{footer}</p>
+    </div>
+  );
+}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          label="PM2.5 (índice)"
-          value={formatPmIndex(current.pm25)}
-          hint={`PM1 ${formatPmIndex(current.pm1)} · PM10 ${formatPmIndex(current.pm10)}`}
-          tone="primary"
-        />
-        <StatCard
-          label="Batería de la estación"
-          value={formatBattery(current.battery_pct)}
-          hint="Lectura del atributo Battery"
-          tone={
-            current.battery_pct === null
-              ? 'neutral'
-              : current.battery_pct <= 20
-                ? 'warning'
-                : 'success'
-          }
-        />
-        <StatCard
-          label="Tendencia 24 h"
-          value={formatSignedPressure(current.pressure_trend_24h_hpa)}
-          hint={pressureTrendLabel(current.pressure_trend_24h_hpa)}
-          tone="neutral"
-        />
-        <StatCard
-          label="Ratio PM2.5 / PM10"
-          value={
-            current.pm25_pm10_ratio === null
-              ? '—'
-              : formatCorrelation(current.pm25_pm10_ratio)
-          }
-          hint="Índice relativo, sin unidad publicada"
-          tone="neutral"
-        />
-      </div>
+export function WeatherCurrent({ current, aemet }: WeatherCurrentProps) {
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <SourceCard
+        title="Estación del centro"
+        subtitle="Última lectura de weather.meteo"
+        color={STATION_COLOR}
+        badge={currentStatusLabel(current.status)}
+        badgeWarning={current.status !== 'ok'}
+        temperature={current.temperature_c}
+        humidity={current.humidity_pct}
+        pressure={`${formatPressure(current.pressure_hpa)} a nivel del mar`}
+        footer={
+          current.last_updated
+            ? `${formatTimestamp(current.last_updated, 'd MMM yyyy, HH:mm')} (hace ${formatAge(current.age_hours)})`
+            : 'Sin lectura'
+        }
+      >
+        <p className="mt-1 text-xs text-slate-500">
+          PM1 {formatPmIndex(current.pm1)} · PM2.5 {formatPmIndex(current.pm25)} · PM10{' '}
+          {formatPmIndex(current.pm10)} (índice) · Batería {formatPercent(current.battery_pct)}
+        </p>
+      </SourceCard>
+
+      <SourceCard
+        title="AEMET · Ciudad Real"
+        subtitle="Última observación guardada del observatorio"
+        color={AEMET_COLOR}
+        badge={aemet.stale ? 'Sin datos recientes' : 'Actualizada'}
+        badgeWarning={aemet.stale}
+        temperature={aemet.temperature_c}
+        humidity={aemet.humidity_pct}
+        pressure={`${formatPressure(aemet.pressure_hpa)} a 626 m`}
+        footer={
+          aemet.observed_at
+            ? `${formatTimestamp(aemet.observed_at, 'd MMM yyyy, HH:mm')} (hace ${formatAge(aemet.age_hours)})`
+            : 'Sin observaciones'
+        }
+      />
     </div>
   );
 }

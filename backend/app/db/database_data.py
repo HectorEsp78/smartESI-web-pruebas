@@ -11,34 +11,31 @@ Nothing here writes to the database: it only reads through
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+import math
+import statistics
+from datetime import datetime, timedelta
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.buildings import BUILDINGS_BY_ID
-from app.core.clock import local_tz
+from app.core.clock import (
+    HOUR_SECONDS,
+    floor_hour_epoch,
+    local_hour_from_epoch,
+    local_hour_from_utc,
+    to_utc_naive,
+)
 from app.core.config import settings
 from app.db import repository
 from app.db.entity_map import BUILDING_OCCUPANCY_COUNTERS, OccupancyCounter
 
-_HOUR_SECONDS = 3600
 # How far back to look for the last known value before a window (fill-forward seed).
 _BASELINE_LOOKBACK = timedelta(days=3)
-
-
-def _to_utc_naive(value: datetime) -> datetime:
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _floor_epoch(value_utc_naive: datetime) -> int:
-    seconds = int(value_utc_naive.replace(tzinfo=timezone.utc).timestamp())
-    return seconds // _HOUR_SECONDS * _HOUR_SECONDS
-
-
-def _local_hour_from_epoch(epoch_seconds: int) -> datetime:
-    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).astimezone(local_tz()).replace(
-        minute=0, second=0, microsecond=0
-    )
+# The real cost counter is sampled every ~15 min. Cap the price-estimation
+# window so a 6-year comparison does not read hundreds of thousands of rows.
+_PRICE_LOOKBACK = timedelta(days=120)
+# Hours with less energy than this make the €/kWh ratio meaningless.
+_MIN_KWH_FOR_PRICE = 0.05
 
 
 def parse_counter_value(
@@ -49,7 +46,8 @@ def parse_counter_value(
     """Numeric value of a counter stored in ``state`` or in a JSON attribute.
 
     Returns ``None`` for ``unavailable``/``unknown`` states, missing attributes
-    and non-numeric values, so a broken counter cannot be mistaken for 0.
+    and non-numeric or non-finite values (``nan``, ``inf``), so a broken counter
+    cannot be mistaken for 0 or break the aggregations.
     """
     raw: object
     if attribute is None:
@@ -64,9 +62,10 @@ def parse_counter_value(
         raw = parsed.get(attribute)
 
     try:
-        return float(raw)  # type: ignore[arg-type]
+        value = float(raw)  # type: ignore[arg-type]
     except (TypeError, ValueError):
         return None
+    return value if math.isfinite(value) else None
 
 
 def net_occupancy(entrance: float | None, exit_: float | None, capacity: int) -> int | None:
@@ -103,36 +102,33 @@ def cumulative_to_hourly(
     ``max_delta`` is ignored so a bad row cannot inflate a whole chart.
     """
     hourly: dict[datetime, float] = {}
-    last_change_time: datetime | None = None
-    last_change_sum: float | None = None
-    previous_sum: float | None = None
+    last_change: tuple[datetime, float] | None = None
 
     for start, total in rows:
-        if previous_sum is not None and total == previous_sum:
+        if last_change is None:
+            last_change = (start, total)
+            continue
+
+        last_change_time, last_change_sum = last_change
+        if total == last_change_sum:
             continue  # value unchanged: just an hourly duplicate row
 
-        if last_change_sum is None:
-            last_change_time, last_change_sum = start, total
-        else:
-            delta = total - last_change_sum
-            per_hour = delta if delta > 0 else 0.0
-            hours = 1
-            if spread:
-                elapsed_hours = max(1.0, (start - last_change_time).total_seconds() / 3600.0)
-                per_hour = per_hour / elapsed_hours
-                hours = int(round(elapsed_hours))
-            if max_delta is not None and per_hour > max_delta:
-                per_hour = 0.0
-            # The delta closes the interval at ``start``: attribute it to that
-            # hour (and to the preceding ones when several hours were missing).
-            first_hour = start - timedelta(hours=hours - 1)
-            for offset in range(hours):
-                step = first_hour + timedelta(hours=offset)
-                key = _local_hour_from_epoch(_floor_epoch(step))
-                hourly[key] = hourly.get(key, 0.0) + per_hour
-            last_change_time, last_change_sum = start, total
-
-        previous_sum = total
+        delta = total - last_change_sum
+        per_hour = delta if delta > 0 else 0.0
+        hours = 1
+        if spread:
+            elapsed_hours = max(1.0, (start - last_change_time).total_seconds() / 3600.0)
+            per_hour = per_hour / elapsed_hours
+            hours = round(elapsed_hours)
+        if max_delta is not None and per_hour > max_delta:
+            per_hour = 0.0
+        # The delta closes the interval at ``start``: attribute it to that
+        # hour (and to the preceding ones when several hours were missing).
+        first_hour = start - timedelta(hours=hours - 1)
+        for offset in range(hours):
+            key = local_hour_from_utc(first_hour + timedelta(hours=offset))
+            hourly[key] = hourly.get(key, 0.0) + per_hour
+        last_change = (start, total)
 
     return hourly
 
@@ -151,10 +147,10 @@ async def _load_counter_series(
     if not counters:
         return {}
 
-    start_utc = _to_utc_naive(start_local)
-    end_utc = _to_utc_naive(end_local)
-    start_epoch = _floor_epoch(start_utc)
-    end_epoch = _floor_epoch(end_utc)
+    start_utc = to_utc_naive(start_local)
+    end_utc = to_utc_naive(end_local)
+    start_epoch = floor_hour_epoch(start_utc)
+    end_epoch = floor_hour_epoch(end_utc)
     counter_by_key = {(c.entity_id, c.attribute): c for c in counters}
     entity_ids = sorted({counter.entity_id for counter in counters})
 
@@ -188,11 +184,11 @@ async def _load_counter_series(
         values = measured.get(key, {})
         last_value = baselines.get(key)
         filled: dict[datetime, float] = {}
-        for epoch in range(start_epoch, end_epoch, _HOUR_SECONDS):
+        for epoch in range(start_epoch, end_epoch, HOUR_SECONDS):
             if epoch in values:
                 last_value = values[epoch]
             if last_value is not None:
-                filled[_local_hour_from_epoch(epoch)] = last_value
+                filled[local_hour_from_epoch(epoch)] = last_value
         if filled:
             series[key] = filled
 
@@ -219,8 +215,8 @@ async def load_hourly_statistics(
     rows = await repository.fetch_statistics_sums(
         session,
         list(statistic_to_key.keys()),
-        _to_utc_naive(start_local - timedelta(hours=1)),
-        _to_utc_naive(end_local),
+        to_utc_naive(start_local - timedelta(hours=1)),
+        to_utc_naive(end_local),
     )
 
     by_entity: dict[str, list[tuple[datetime, float]]] = {}
@@ -233,6 +229,81 @@ async def load_hourly_statistics(
         )
         for statistic_id, series in by_entity.items()
     }
+
+
+def cost_states_to_hourly(
+    rows: list[tuple[datetime, float]],
+    baseline: float | None = None,
+) -> dict[datetime, float]:
+    """Turn raw cumulative monetary counter rows into hourly cost (local hour).
+
+    The monetary counter is only stored in the raw ``states`` table, where a row
+    is written whenever the value changes (~15 min). Each difference is assigned
+    to the local hour of the closing row. A drop is treated as a meter reset and
+    the new value is used as the cost accrued since the reset.
+    """
+    hourly: dict[datetime, float] = {}
+    previous = baseline
+    for updated, value in rows:
+        if previous is not None:
+            delta = value - previous if value >= previous else value
+            if delta > 0:
+                key = local_hour_from_utc(updated)
+                hourly[key] = hourly.get(key, 0.0) + delta
+        previous = value
+    return hourly
+
+
+async def estimate_site_energy_price(
+    session: AsyncSession,
+    entity_id: str,
+    start_local: datetime,
+    end_local: datetime,
+    site_kwh: dict[datetime, float],
+    *,
+    min_ratio: float = 0.01,
+    max_ratio: float = 1.0,
+) -> float | None:
+    """Effective €/kWh actually applied by the main panel over the period.
+
+    The real monetary counter is compared with the site kWh series hour by hour
+    and the **median** ratio is returned. The median discards the corrupted
+    readings present in the recorder (the counter has historical spikes) while
+    still capturing a tariff change. Returns ``None`` when there is not enough
+    reliable data, so the caller can fall back to the configured price.
+    """
+    # Use the most recent part of the requested range: the tariff is a property
+    # of the period and the last 120 days are enough to measure it.
+    cost_start = max(start_local, end_local - _PRICE_LOOKBACK)
+    start_utc = to_utc_naive(cost_start)
+    end_utc = to_utc_naive(end_local)
+    rows = await repository.fetch_state_rows(session, [entity_id], start_utc, end_utc)
+    snapshots = await repository.fetch_last_state_snapshots_before(
+        session, [entity_id], start_utc, _BASELINE_LOOKBACK
+    )
+
+    baseline_state, _ = snapshots.get(entity_id, (None, None))
+    baseline = parse_counter_value(baseline_state, None)
+    measured: list[tuple[datetime, float]] = []
+    for loaded_entity, updated, state in rows:
+        if loaded_entity != entity_id:
+            continue
+        value = parse_counter_value(state, None)
+        if value is not None:
+            measured.append((updated, value))
+
+    hourly_cost = cost_states_to_hourly(measured, baseline)
+
+    ratios: list[float] = []
+    for hour, cost in hourly_cost.items():
+        kwh = site_kwh.get(hour)
+        if kwh is None or kwh <= _MIN_KWH_FOR_PRICE or cost <= 0:
+            continue
+        ratio = cost / kwh
+        if min_ratio <= ratio <= max_ratio:
+            ratios.append(ratio)
+
+    return statistics.median(ratios) if ratios else None
 
 
 async def load_hourly_occupancy(

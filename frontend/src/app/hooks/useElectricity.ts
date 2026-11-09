@@ -1,84 +1,43 @@
 import { useQuery } from '@tanstack/react-query';
 import {
-  fetchElectricityCompare,
   fetchElectricityCompareMany,
   fetchElectricityMeta,
   fetchElectricityStats,
 } from '../api/electricity';
 import type { ElectricityPeriod, ElectricityQuery } from '../api/electricity';
 import type {
-  ElectricityCompareDto,
   ElectricityCompareManyDto,
   ElectricityDto,
   ElectricityGranularity,
   ElectricityMetaDto,
   ElectricityMetric,
 } from '../types/electricity';
+import { CATALOGUE_STALE_TIME, STALE_TIME, toQueryResult } from './queryResult';
+import type { QueryResult } from './queryResult';
 
-interface Result<T> {
-  data: T | null;
-  isLoading: boolean;
-  isFetching: boolean;
-  error: Error | null;
-  retry: () => void;
+export function useElectricityMeta(): QueryResult<ElectricityMetaDto> {
+  return toQueryResult(
+    useQuery({
+      queryKey: ['electricityMeta'],
+      queryFn: ({ signal }) => fetchElectricityMeta(signal),
+      staleTime: CATALOGUE_STALE_TIME,
+    }),
+  );
 }
 
-const STALE_TIME = 60 * 1000;
-
-export function useElectricityMeta(): Result<ElectricityMetaDto> {
-  const { data = null, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['electricityMeta'],
-    queryFn: ({ signal }) => fetchElectricityMeta(signal),
-    staleTime: 30 * 60 * 1000,
-  });
-  return { data, isLoading, isFetching, error: error as Error | null, retry: refetch };
-}
-
-export function useElectricityStats(query: ElectricityQuery | null): Result<ElectricityDto> {
-  const { data = null, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['electricity', query],
-    queryFn: ({ signal }) => {
-      if (!query) throw new Error('Periodo no válido.');
-      return fetchElectricityStats(query, signal);
-    },
-    enabled: query !== null,
-    staleTime: STALE_TIME,
-    placeholderData: (previous) => previous,
-  });
-  return { data, isLoading, isFetching, error: error as Error | null, retry: refetch };
-}
-
-export interface ElectricityCompareQuery {
-  periodA: ElectricityPeriod;
-  periodB: ElectricityPeriod;
-  granularity: ElectricityGranularity;
-  metric: ElectricityMetric;
-  building: string;
-  sector?: string;
-}
-
-export function useElectricityCompare(
-  query: ElectricityCompareQuery | null,
-): Result<ElectricityCompareDto> {
-  const { data = null, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['electricityCompare', query],
-    queryFn: ({ signal }) => {
-      if (!query) throw new Error('Periodo no válido.');
-      return fetchElectricityCompare(
-        query.periodA,
-        query.periodB,
-        query.granularity,
-        query.metric,
-        query.building,
-        query.sector,
-        signal,
-      );
-    },
-    enabled: query !== null,
-    staleTime: STALE_TIME,
-    placeholderData: (previous) => previous,
-  });
-  return { data, isLoading, isFetching, error: error as Error | null, retry: refetch };
+export function useElectricityStats(query: ElectricityQuery | null): QueryResult<ElectricityDto> {
+  return toQueryResult(
+    useQuery({
+      queryKey: ['electricity', query],
+      queryFn: ({ signal }) => {
+        if (!query) throw new Error('Periodo no válido.');
+        return fetchElectricityStats(query, signal);
+      },
+      enabled: query !== null,
+      staleTime: STALE_TIME,
+      placeholderData: (previous) => previous,
+    }),
+  );
 }
 
 export interface ElectricityCompareManyQuery {
@@ -91,23 +50,24 @@ export interface ElectricityCompareManyQuery {
 
 export function useElectricityCompareMany(
   query: ElectricityCompareManyQuery | null,
-): Result<ElectricityCompareManyDto> {
-  const { data = null, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['electricityCompareMany', query],
-    queryFn: ({ signal }) => {
-      if (!query) throw new Error('Periodo no válido.');
-      return fetchElectricityCompareMany(
-        query.periods,
-        query.granularity,
-        query.metric,
-        query.building,
-        query.sector,
-        signal,
-      );
-    },
-    enabled: query !== null,
-    staleTime: STALE_TIME,
-    placeholderData: (previous) => previous,
-  });
-  return { data, isLoading, isFetching, error: error as Error | null, retry: refetch };
+): QueryResult<ElectricityCompareManyDto> {
+  return toQueryResult(
+    useQuery({
+      queryKey: ['electricityCompareMany', query],
+      queryFn: ({ signal }) => {
+        if (!query) throw new Error('Periodo no válido.');
+        return fetchElectricityCompareMany(
+          query.periods,
+          query.granularity,
+          query.metric,
+          query.building,
+          query.sector,
+          signal,
+        );
+      },
+      enabled: query !== null,
+      staleTime: STALE_TIME,
+      placeholderData: (previous) => previous,
+    }),
+  );
 }

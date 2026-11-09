@@ -18,7 +18,7 @@ interface HeaderProps {
   onSelectTab: (tab: DashboardTabId) => void;
 }
 
-export function Header({ activeTab, onSelectTab: onSelectTabProp }: HeaderProps) {
+export function Header({ activeTab, onSelectTab }: HeaderProps) {
   const { range, setRange } = useGlobalRange();
 
   return (
@@ -88,7 +88,7 @@ export function Header({ activeTab, onSelectTab: onSelectTabProp }: HeaderProps)
                   <button
                     key={tab.id}
                     type="button"
-                    onClick={() => onSelectTabProp(tab.id)}
+                    onClick={() => onSelectTab(tab.id)}
                     aria-pressed={isActive}
                     className={`relative flex shrink-0 cursor-pointer items-center border-r border-slate-200 px-5 py-5 text-sm font-semibold text-slate-800 transition-colors hover:text-primary ${
                       isActive ? 'text-primary' : ''

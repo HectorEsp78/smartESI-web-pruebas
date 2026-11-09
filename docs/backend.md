@@ -87,10 +87,10 @@ Parámetros en ambas rutas:
 
 Rutas de la interfaz:
 
-- `/infraestructura`: índice compacto.
-- `/infraestructura/{room_id}`: página de una estancia.
+- `/infraestructura`: tarjetas de las cuatro aulas (A11, A12, A21 y A22).
+- `/infraestructura/{room_id}`: temperatura, humedad y presencia del aula.
 
-Devuelve solo las estancias con sensores identificados: **A11, A12, A21, A22, F0.2, Aula de Libre Uso (ALU)** y **Sala Anita Borg**. Los laboratorios y los Shelly genéricos (`sensor.temperatura_shelly*`, `sensor.humedad_shelly*`) no se incluyen mientras no exista un mapa fiable de sala.
+La interfaz usa solo las cuatro aulas y las tres gráficas anteriores; el resto de estancias y cruces sigue disponible en la API para futuras vistas. Los laboratorios y los Shelly genéricos (`sensor.temperatura_shelly*`, `sensor.humedad_shelly*`) no se incluyen mientras no exista un mapa fiable de sala.
 
 Cada estancia incluye:
 
@@ -117,6 +117,8 @@ El detalle añade:
 | ------ | ---- | ----------- |
 | GET | `/api/v1/maintenance/overview` | Estado de los dispositivos vigilados: batería, transmisión, cortes, matriz de decisión y mapa diario. |
 | GET | `/api/v1/maintenance/devices/{device_id}` | Detalle de un dispositivo: historial de batería, transmisión diaria y cortes que le afectan. |
+| GET | `/api/v1/maintenance/batteries/{group_id}` | Nivel actual de los sensores de `shellys`, `valvulas` o `aulas`. Un grupo desconocido devuelve 404. |
+| GET | `/api/v1/maintenance/batteries/{group_id}/{sensor_id}/history?start=&end=` | Histórico de un sensor. Por defecto, 90 días; medias por hora hasta 31 días y por día a partir de ahí. Sin límite de longitud. Fechas no válidas: 422. |
 
 Parámetro `days`: `7`, `30` o `90`; por defecto `30`. Un valor distinto devuelve `422`. Un `device_id` desconocido devuelve `404`.
 
@@ -139,20 +141,18 @@ El resumen incluye baterías bajas/críticas, dispositivos sin datos, disponibil
 
 | Método | Ruta | Descripción |
 | ------ | ---- | ----------- |
-| GET | `/api/v1/weather/overview` | Estación meteorológica, resumen, series y cruces con el interior, AEMET y la energía. |
+| GET | `/api/v1/weather/overview` | Estación meteorológica del centro frente al observatorio de AEMET en Ciudad Real. |
 
-Parámetro `days`: `7`, `30` o `90`; por defecto `30`. Un valor distinto devuelve `422`.
+Parámetros `start` y `end` (fechas incluidas): últimos 30 días por defecto y un máximo de 366. Hasta 7 días la serie es horaria y, por encima, diaria. Un periodo inválido devuelve `422`.
 
 La respuesta incluye:
 
-- `current`: última lectura válida de `weather.meteo` (temperatura, humedad, presión, PM1/PM2.5/PM10 y batería), estado `ok|stale|missing`, edad del dato y derivados (punto de rocío, humedad absoluta, sensación térmica y tendencia de presión a 3/24 h).
-- `summary`: cobertura, intervalo mediano, horas sin datos, medias/mínimos/máximos, amplitud diaria, horas de calor/frío, sequedad/humedad, noches tropicales, grados-día y PM.
-- `series`: serie horaria para 7 días y diaria para 30/90 días. Incluye estación, interior, AEMET y energía.
-- `daily`: resumen por día; siempre se calcula, aunque la serie sea horaria.
-- `indoor_cross`: comparación con `sensor.ambiente`.
-- `aemet_cross`: comparación con la referencia externa de Ciudad Real.
-- `energy_cross`: gas y electricidad frente a temperatura y grados-día.
-- `pm_cross`: ratios y correlaciones de las partículas.
+- `current`: última lectura de `weather.meteo` (temperatura, humedad, presión, PM1/PM2.5/PM10 y batería), estado `ok|stale|missing` y edad del dato. Siempre es el valor actual, aunque el periodo sea pasado.
+- `aemet_latest`: última observación de AEMET guardada, su edad y si está desactualizada (`stale`).
+- `aemet_availability`: cobertura `complete|partial|none`, horas del periodo, observadas y comparadas, y huecos de 6 h o más.
+- `comparison`: temperatura, humedad y presión con diferencia media (estación − AEMET), error absoluto medio y correlación. Temperatura añade la diferencia de día y de noche; humedad, el porcentaje de horas saturadas y la diferencia sin saturar. `hourly_bias` da la diferencia de temperatura por hora local.
+- `summary`: estadísticas de la estación en el periodo y lluvia de AEMET.
+- `series`: ambas fuentes, lluvia, partículas y batería. Un hueco se devuelve como `null`.
 - `notes`: criterios y limitaciones.
 
 La pestaña es de **solo lectura**: no escribe en el recorder ni guarda un registro de intervenciones.
@@ -171,11 +171,11 @@ Variables principales (`.env`):
 
 | Variable | Defecto | Uso |
 | -------- | ------- | --- |
-| `DATA_SOURCE` | `database` | `mock` o `database`. |
+| `DATA_SOURCE` | `mock` | `mock` o `database`. |
 | `DB_HOST`, `DB_PORT`, `DB_NAME` | — | Conexión al recorder. |
 | `DB_USER`, `DB_PASSWORD` | — | Credenciales. |
 | `DB_SSL`, `DB_SSL_CA` | `true`, vacío | TLS; sin CA se cifra sin verificar certificado. |
-| `ENERGY_PRICE_EUR_PER_KWH` | `0.20` | Precio del kWh. |
+| `ENERGY_PRICE_EUR_PER_KWH` | `0.20` | Precio de respaldo; en Electricidad se usa la tarifa real de `sensor.cuadro_general_cost`. |
 | `CO2_KG_PER_KWH` | `0.15` | Factor de emisiones de la electricidad. |
 | `ENERGY_MAX_KWH_PER_HOUR` | `150.0` | Tope de plausibilidad por hora. |
 | `STATS_CACHE_TTL_SECONDS` | `30` | TTL de la caché. |
@@ -189,6 +189,7 @@ Variables principales (`.env`):
 | Elemento | Estadístico | Cálculo |
 | -------- | ----------- | ------- |
 | Centro | `sensor.cuadro_general` | Total del sitio. |
+| Tarifa real | `sensor.cuadro_general_cost` | Contador monetario en `states`; se usa la mediana de coste/kWh. |
 | Módulo A | `sensor.edificio_a` | Contador directo. |
 | Módulo B | `sensor.edificio_b` | Contador directo. |
 | Fermín Caballero | — | `Cuadro General − Módulo A − Módulo B`. |
@@ -235,6 +236,8 @@ Los sectores son **parciales**: cubren aproximadamente el 30–38 % de Fermín s
 
 ### Mantenimiento — `core/maintenance_map.py`
 
+Los sensores de las páginas de batería están en `core/battery_map.py`; los umbrales y la curva de mV a % se reutilizan de `core/maintenance_map.py`.
+
 Catálogo de 52 dispositivos con entidad de latido, entidad de batería, unidad, intervalo esperado y notas:
 
 | Grupo | Dispositivos | Latido | Batería |
@@ -262,17 +265,17 @@ La curva mV → % es orientativa (Li-SOCl₂ 3,6 V); el valor en mV sigue siendo
 | Elemento | Entidad | Uso |
 | -------- | ------- | --- |
 | Estación | `weather.meteo` | `state` = temperatura exterior; atributos `Humidity`, `Pressure` (nivel del mar), `PM1`, `PM2.5`, `PM10` y `Battery`. |
-| Interior | `sensor.ambiente` | Temperatura, humedad, CO₂, TVOC y presión para el cruce exterior-interior. |
-| AEMET | `sensor.aemet_*` | Referencia externa de Ciudad Real: temperatura, humedad, presión, precipitación, visibilidad y nieve. |
+| AEMET | `sensor.aemet_temperature`, `_humidity`, `_pressure`, `_precipitation` | Observatorio de Ciudad Real. Cada fila guarda la hora de observación en el atributo `last_update` y se escribe unos 30 minutos después. |
 
 - La estación no publica viento, lluvia ni radiación solar.
 - `Pressure` se publica reducida al nivel del mar; para compararla con AEMET se reduce a la altitud del observatorio (626,17 m).
 - Los valores de PM no declaran unidad: se tratan como índice relativo y no se comparan con umbrales sanitarios.
 - `weather.meteo_2` es una entidad duplicada no disponible y no se usa.
 - Se descartan reinicios con `state=0` y sin atributos útiles.
-- Umbrales: calor ≥30 °C, frío ≤10 °C, noche tropical ≥20 °C, sequedad <30 %, humedad ≥80 %, HDD base 18 °C, CDD base 22 °C.
+- Cada observación de AEMET (por ejemplo, la de las 17:00) se compara con la media de la estación de la hora anterior (16:00–17:00). Es el desfase con mayor correlación medido en el recorder.
+- Solo se comparan las horas con datos de ambas fuentes. Una media diaria de AEMET necesita al menos 12 observaciones.
+- La humedad de la estación se considera saturada desde el 99 %.
 - La estación se marca `stale` si el último dato supera 2× su intervalo mediano (mínimo 2 h). AEMET se marca `stale` tras 24 h.
-- Los cruces energéticos excluyen días con saltos anómalos por encima de `max(tope absoluto, 4 × mediana)`.
 
 ## Base de datos
 
@@ -286,8 +289,7 @@ Solo se consultan estas formas:
 6. El último valor válido de cada entidad para las tarjetas de estado actual.
 7. `statistics.sum` de `sensor.daily_gas` y `sensor.daily_gas_cost` para el contexto de calefacción.
 8. `states` con las marcas de tiempo de los latidos y el último valor anterior a la ventana para Mantenimiento.
-9. `states` de `weather.meteo`, `sensor.ambiente` y las entidades AEMET, más el último valor válido de cada una para Medio Ambiente.
-10. `statistics.sum` de `sensor.daily_gas`, `sensor.daily_gas_cost` y `sensor.cuadro_general` para el cruce energético.
+9. `states` de `weather.meteo` y de las entidades AEMET, más el último valor de cada una, para Medio Ambiente.
 
 Todas las consultas filtran por `entity_id` y por el rango temporal para usar los índices del recorder. La agregación por hora/día/semana se hace con la zona `Europe/Madrid`. En Infraestructura, las cuatro consultas de CO₂ se lanzan en paralelo para que el rango anual no espere cuatro escaneos seguidos.
 

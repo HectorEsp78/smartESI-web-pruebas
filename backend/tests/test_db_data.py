@@ -11,7 +11,9 @@ from unittest.mock import AsyncMock, patch
 
 from app.core.clock import local_tz
 from app.db.database_data import (
+    cost_states_to_hourly,
     cumulative_to_hourly,
+    estimate_site_energy_price,
     load_hourly_occupancy,
     load_hourly_statistics,
     net_occupancy,
@@ -77,6 +79,66 @@ class CumulativeToHourlyTest(unittest.TestCase):
 
         dropped = cumulative_to_hourly(rows, max_delta=50.0, spread=False)
         self.assertAlmostEqual(sum(dropped.values()), 0.0, places=3)
+
+
+class CostStatesToHourlyTest(unittest.TestCase):
+    def test_cost_differences_are_grouped_by_local_hour(self):
+        rows = [
+            (datetime(2026, 1, 1, 10, 0), 100.4),
+            (datetime(2026, 1, 1, 10, 15), 100.7),
+            (datetime(2026, 1, 1, 10, 30), 100.9),
+        ]
+        hourly = cost_states_to_hourly(rows, baseline=100.0)
+
+        # 10:00-10:30 UTC is 11:00 local in winter.
+        hour = datetime(2026, 1, 1, 11, 0, tzinfo=local_tz())
+        self.assertEqual(set(hourly), {hour})
+        self.assertAlmostEqual(hourly[hour], 0.9, places=3)
+
+    def test_reset_uses_the_new_value_as_cost(self):
+        rows = [
+            (datetime(2026, 1, 1, 10, 0), 500.0),
+            (datetime(2026, 1, 1, 10, 15), 0.0),  # reset
+            (datetime(2026, 1, 1, 10, 30), 0.5),
+        ]
+        hourly = cost_states_to_hourly(rows, baseline=499.0)
+
+        self.assertTrue(all(value >= 0.0 for value in hourly.values()))
+        self.assertAlmostEqual(sum(hourly.values()), 1.5, places=3)
+
+
+class EnergyPriceEstimationTest(unittest.IsolatedAsyncioTestCase):
+    async def test_median_ignores_outlier_hours(self):
+        entity = "sensor.cuadro_general_cost"
+        rows = [
+            (entity, datetime(2026, 1, 1, 10, 15), "101.15"),
+            (entity, datetime(2026, 1, 1, 11, 15), "102.30"),
+            (entity, datetime(2026, 1, 1, 12, 15), "500000.00"),  # corrupted
+            (entity, datetime(2026, 1, 1, 12, 30), "500000.50"),
+        ]
+        snapshots = {entity: ("100.0", None)}
+        site_kwh = {
+            datetime(2026, 1, 1, 11, 0, tzinfo=local_tz()): 10.0,
+            datetime(2026, 1, 1, 12, 0, tzinfo=local_tz()): 10.0,
+            datetime(2026, 1, 1, 13, 0, tzinfo=local_tz()): 10.0,
+        }
+        start = datetime(2026, 1, 1, 0, 0, tzinfo=local_tz())
+        end = datetime(2026, 1, 2, 0, 0, tzinfo=local_tz())
+
+        with (
+            patch(
+                "app.db.database_data.repository.fetch_state_rows",
+                new=AsyncMock(return_value=rows),
+            ),
+            patch(
+                "app.db.database_data.repository.fetch_last_state_snapshots_before",
+                new=AsyncMock(return_value=snapshots),
+            ),
+        ):
+            price = await estimate_site_energy_price(None, entity, start, end, site_kwh)
+
+        # 1.15 EUR / 10 kWh = 0.115; the 499,897.7 EUR jump is discarded.
+        self.assertAlmostEqual(price, 0.115, places=6)
 
 
 class StatisticsLoaderTest(unittest.IsolatedAsyncioTestCase):

@@ -25,6 +25,7 @@ import statistics
 import zlib
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
+from itertools import pairwise
 from typing import Literal
 
 from app.core.cache import TTLCache
@@ -156,9 +157,7 @@ def estimate_pct_from_mv(millivolts: float) -> float:
         return 100.0
     if millivolts <= MV_PERCENT_CURVE[-1][0]:
         return 0.0
-    for (high_mv, high_pct), (low_mv, low_pct) in zip(
-        MV_PERCENT_CURVE, MV_PERCENT_CURVE[1:]
-    ):
+    for (high_mv, high_pct), (low_mv, low_pct) in pairwise(MV_PERCENT_CURVE):
         if low_mv <= millivolts <= high_mv:
             ratio = (millivolts - low_mv) / (high_mv - low_mv)
             return low_pct + ratio * (high_pct - low_pct)
@@ -305,7 +304,7 @@ def _battery_trend(
     variance = sum((x - mean_x) ** 2 for x in xs)
     if variance <= 0:
         return None, None
-    covariance = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    covariance = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=True))
     slope = covariance / variance
     return slope * BATTERY_TREND_DAYS, slope
 
@@ -346,8 +345,8 @@ def _analyze_battery(
         status = "unknown"
 
     replacement_at: datetime | None = None
-    for (prev_at, _prev_value, prev_pct), (current_at, _current_value, current_pct) in zip(
-        valid, valid[1:]
+    for (_prev_at, _prev_value, prev_pct), (current_at, _current_value, current_pct) in pairwise(
+        valid
     ):
         jump = current_pct - prev_pct
         if jump >= BATTERY_REPLACEMENT_JUMP_PCT and (
@@ -441,7 +440,7 @@ def _heartbeat_gaps(
     if first > gap_start and _hours(gap_start, first) > threshold:
         gaps.append(_Gap(device.id, gap_start, first, False))
 
-    for previous_anchor, current_anchor in zip(anchors, anchors[1:]):
+    for previous_anchor, current_anchor in pairwise(anchors):
         start = max(previous_anchor, period.start)
         if current_anchor > start and _hours(start, current_anchor) > threshold:
             gaps.append(_Gap(device.id, start, current_anchor, False))
@@ -462,7 +461,7 @@ def _analyze_heartbeat(
     period_times = [value for value in ordered if period.start <= value <= period.end]
     intervals = [
         _hours(previous, current)
-        for previous, current in zip(period_times, period_times[1:])
+        for previous, current in pairwise(period_times)
     ]
     median_interval = statistics.median(intervals) if intervals else None
     p95_interval = _percentile(intervals, 95) if intervals else None
@@ -594,7 +593,6 @@ def _correlate_outages(
 def _classify_data(
     device: MaintenanceDevice,
     analysis: _HeartbeatAnalysis,
-    period: _Period,
 ) -> tuple[DataStatus, bool]:
     if not device.is_periodic:
         if analysis.silence_hours is None:
@@ -813,10 +811,9 @@ def _reasons(
                 )
 
     if availability.outages_individual:
-        reasons.append(
-            f"{availability.outages_individual} cortes individuales; "
-            f"MTTR {_fmt_hours(availability.mttr_hours)}."
-        )
+        count = availability.outages_individual
+        noun = "corte individual" if count == 1 else "cortes individuales"
+        reasons.append(f"{count} {noun}; MTTR {_fmt_hours(availability.mttr_hours)}.")
     if availability.outages_global:
         reasons.append("Afectado por un corte global del recorder.")
     if availability.outages_group:
@@ -1001,7 +998,7 @@ def _build_summary(
         device, data.battery_points, period, analysis.silence_hours
     )
     availability = _build_availability(analysis, period)
-    data_status, data_ok = _classify_data(device, analysis, period)
+    data_status, data_ok = _classify_data(device, analysis)
     bucket = _battery_bucket(battery)
 
     if device.has_battery:
@@ -1160,7 +1157,6 @@ def _daily_points(
 
 
 def _build_heatmap(
-    dataset: _Dataset,
     analyses: dict[str, _HeartbeatAnalysis],
     period: _Period,
 ) -> list[MaintenanceHeatmapCell]:
@@ -1218,7 +1214,7 @@ async def build_overview(days: int | None = None) -> MaintenanceOverviewResponse
         summary=_summary_counts(summaries, outages),
         devices=summaries,
         outages=outages,
-        heatmap=_build_heatmap(dataset, analyses, period),
+        heatmap=_build_heatmap(analyses, period),
         data_source=dataset.data_source,
         notes=_notes(dataset.data_source),
     )

@@ -7,8 +7,8 @@ from app.core.maintenance_map import DEVICES_BY_ID, EVENT_OFFLINE_HOURS
 from app.main import app
 from app.services import maintenance_service
 from app.services.maintenance_service import (
-    _Period,
     _analyze_heartbeat,
+    _Period,
     estimate_pct_from_mv,
 )
 

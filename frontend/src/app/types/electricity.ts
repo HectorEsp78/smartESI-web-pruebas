@@ -5,6 +5,8 @@ export type ElectricityGranularity = 'day' | 'week' | 'month' | 'year';
 
 export const ELECTRICITY_METRICS: ElectricityMetric[] = ['kwh', 'cost'];
 export const ELECTRICITY_ALL = 'all';
+/** The only building with partial submeters (floor panels and CPD). */
+export const FERMIN_BUILDING_ID = 'FerminCaballero';
 export const DEFAULT_ELECTRICITY_METRIC: ElectricityMetric = 'kwh';
 
 export const ELECTRICITY_METRIC_LABEL: Record<ElectricityMetric, string> = {
@@ -86,6 +88,8 @@ export interface ElectricityDto {
   unmetered_total: number;
   sector_coverage: number;
   data_start: string;
+  /** Effective €/kWh measured from the main-panel cost counter. */
+  price_eur_per_kwh: number;
 }
 
 export interface ElectricityComparePointDto {
@@ -115,6 +119,7 @@ export interface ElectricityCompareDto {
   period_b: ElectricityStatsDto;
   baseline_hourly: number;
   delta_pct: number;
+  price_eur_per_kwh?: number | null;
   series: ElectricityComparePointDto[];
 }
 
@@ -147,6 +152,7 @@ export interface ElectricityCompareManyDto {
   periods: ElectricityComparePeriodDto[];
   baseline_hourly: number;
   equal_length: boolean;
+  price_eur_per_kwh?: number | null;
   series: ElectricityCompareManyPointDto[];
 }
 

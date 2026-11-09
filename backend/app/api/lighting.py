@@ -14,7 +14,7 @@ router = APIRouter(prefix="/lighting", tags=["lighting"])
 
 
 def _validate_building(building_id: str) -> None:
-    if building_id in (None, "", ALL_BUILDINGS):
+    if building_id in ("", ALL_BUILDINGS):
         return
     if building_id not in BUILDINGS_BY_ID:
         raise HTTPException(

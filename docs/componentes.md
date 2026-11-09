@@ -98,68 +98,35 @@ El selector global de periodo y edificio afecta a las tres gráficas.
 ### `EnvironmentDashboard`
 
 - Resuelve `/infraestructura` (índice) y `/infraestructura/{room_id}` (detalle).
-- Mantiene las fechas en la URL al cambiar de estancia.
-- Muestra las notas de origen y limitaciones.
+- Mantiene el periodo en la URL al cambiar de aula.
 
 ### `EnvironmentIndex`
 
-- Filtro de fechas con 7 días por defecto y máximo de un año.
-- Resumen compacto del periodo y lista de estancias.
-- Enlaces a la página de cada estancia.
+- Selector Día / Semana / Mes, con el día actual por defecto.
+- Rejilla de tarjetas de A11, A12, A21 y A22.
+- Enlaces al detalle de cada aula conservando `start` y `end`.
 
-### `EnvironmentRoomList`
+### `EnvironmentRangeSelector`
 
-- Una fila por estancia confirmada.
-- Cuatro columnas: espacio, ambiente actual, uso y estado.
-- El ambiente agrupa temperatura, humedad y CO₂ en una sola línea.
-- En estancias de solo presencia se indica “solo presencia”.
+- Botones de periodo y fechas visibles.
+- Escribe el periodo en la URL para compartir o volver desde el detalle.
+
+### `EnvironmentRoomCard`
+
+- Tarjeta con la estética del proyecto Smart ESI: imagen, categoría «Aula», código, nombre y presencia.
+- Métricas actuales: temperatura, humedad y presencia (Sí/No).
+- El color de la insignia indica si hay presencia ahora.
 
 ### `EnvironmentRoomPage`
 
-- Página de una estancia.
-- Cabecera compacta con valores actuales, aviso de dato obsoleto y enlace de vuelta.
-- Resumen del periodo y gráficas principales de temperatura y CO₂.
-- El mapa horario, la humedad, los cruces, la comparativa y el gas se agrupan en “Análisis avanzado”, plegado por defecto.
+- Enlace de vuelta, cabecera con valores actuales y selector de periodo.
+- Tres gráficas: temperatura, humedad y presencia.
 
-### `EnvironmentRoomStats`
+### `EnvironmentRoomCharts`
 
-- Cuatro KPIs básicos: temperatura media, humedad media, CO₂ medio y ocupación media.
-- Rangos de temperatura y humedad, pico de CO₂ y horas ocupadas como apoyo.
-
-### `EnvironmentRoomClimateCharts`
-
-- `EnvironmentRoomTemperatureChart`: temperatura de la estancia y ambiente de referencia.
-- `EnvironmentRoomHumidityChart`: humedad con bandas de confort 30–60 %, dentro de “Análisis avanzado”.
-
-### `EnvironmentRoomCo2Chart`
-
-- CO₂ y presencia en el tiempo.
-- Umbrales 800/1.000 ppm.
-
-### `EnvironmentHeatmap`
-
-- Mapa 7×24 de ocupación o CO₂ por día de la semana y hora.
-
-### `EnvironmentCo2OccupancyCard`
-
-- CO₂ con presencia frente a CO₂ sin presencia.
-- Incremento, correlación y dispersión por intervalo.
-
-### `EnvironmentThermalRecoveryCard`
-
-- Temperatura de reposo.
-- Tiempo mediano de recuperación tras desocupar.
-- Cambio en la primera hora y transiciones que no recuperan en 6 horas.
-
-### `EnvironmentBenchmarkCard`
-
-- Comparación de temperatura, humedad, CO₂ y ocupación con la media del resto de estancias.
-
-### `EnvironmentGasContextChart`
-
-- Temperatura de la estancia y ambiente de referencia.
-- Coste de gas del edificio en el periodo.
-- Aviso: el gas es del edificio y puede incluir otros usos.
+- `EnvironmentRoomTemperatureChart`: línea de temperatura y banda de confort 18–24 °C.
+- `EnvironmentRoomHumidityChart`: línea de humedad y banda de confort 30–60 %.
+- `EnvironmentRoomPresenceChart`: escalón 0/1 con eje «Sí/No» por intervalo.
 
 Las fechas son propias de Infraestructura; no dependen del selector global de Iluminación.
 
@@ -167,49 +134,60 @@ Las fechas son propias de Infraestructura; no dependen del selector global de Il
 
 ### `WeatherDashboard`
 
-- Carga `/weather/overview` con la ventana de 7, 30 o 90 días.
-- Compone estado actual, resumen, gráficas, cruces, tabla diaria y notas.
-- Muestra el origen (`mock`/`database`) y la hora de generación.
+- Compone filtros, valores actuales, aviso de AEMET, comparación, gráficas, resumen y notas.
+- Si el periodo no tiene datos de AEMET, oculta la comparación y muestra solo la estación.
+
+### `WeatherFilters`
+
+- Fechas Desde/Hasta y atajos de 7, 30 y 90 días, guardados en la URL.
 
 ### `WeatherCurrent`
 
-- Temperatura exterior, humedad, presión a nivel del mar, PM y batería.
-- Estado `ok|stale|missing`, edad del dato y tendencia de presión.
-- Punto de rocío, humedad absoluta y sensación térmica.
+- Última lectura de la estación y última observación guardada de AEMET, con su antigüedad.
+
+### `WeatherAemetNotice`
+
+- Indica si no hay datos de AEMET, si la cobertura es parcial y si AEMET ha dejado de actualizarse.
+
+### `WeatherComparison`
+
+- Diferencia media (estación − AEMET), error absoluto medio y correlación de temperatura, humedad y presión.
+- Temperatura separa día y noche y avisa de una posible exposición solar.
+- Humedad muestra las horas con el sensor saturado y la diferencia sin ellas.
+
+### `WeatherTemperatureChart` / `WeatherHumidityChart` / `WeatherPressureChart`
+
+- Estación continua y AEMET discontinua en la misma gráfica. Los huecos se dejan sin unir.
+- La presión de ambas está a la altitud del observatorio de AEMET.
+
+### `WeatherHourlyBiasChart`
+
+- Diferencia de temperatura por hora local.
+
+### `WeatherRainChart` / `WeatherPmChart` / `WeatherBatteryChart`
+
+- Lluvia de AEMET, partículas de la estación como índice relativo y batería de la estación.
 
 ### `WeatherSummary`
 
-- Cobertura, intervalo mediano y horas sin datos.
-- Temperatura, amplitud diaria, humedad y presión.
-- Horas de calor/frío, noches tropicales, grados-día y PM.
-
-### `WeatherTemperatureChart` / `WeatherHumidityChart`
-
-- Estación, `sensor.ambiente` como referencia interior y AEMET como referencia externa.
-- AEMET se dibuja discontinua y se etiqueta como externa.
-
-### `WeatherPressureChart`
-
-- Presión de la estación reducida al nivel del mar.
-- La comparación con AEMET se hace en su tarjeta, no en la misma escala.
-
-### `WeatherPmChart`
-
-- PM1, PM2.5 y PM10 como índice relativo.
-- No se comparan con umbrales sanitarios.
-
-### `WeatherIndoorCross` / `WeatherAemetCross` / `WeatherEnergyCross` / `WeatherPmCross`
-
-- Cruces con el interior, AEMET, la energía y las partículas.
-- AEMET incluye barras de sesgo por hora y aviso de exposición solar.
-- Energía avisa de los días excluidos por saltos anómalos.
-
-### `WeatherDailyTable`
-
-- Resumen diario con cobertura, extremos, PM, temperatura interior y energía.
-- Queda plegado en “ver resumen diario”.
+- Medias y extremos de la estación, cobertura, partículas, batería mínima y lluvia total.
 
 ## 7. Mantenimiento
+
+### `BatteryDashboard`
+
+- Lee el grupo de la ruta `/mantenimiento/:groupId` y muestra sus sensores en tarjetas.
+
+### `BatterySensorCard`
+
+- Muestra el último valor válido, su estado y su fecha. Las aulas añaden el % estimado.
+
+### `BatteryHistoryDialog` y `BatteryHistoryChart`
+
+- Muestran el histórico del sensor con fechas libres y accesos a 30 días, 90 días, 1 año y todo.
+
+> Los componentes siguientes pertenecen al panel anterior y no están montados en la interfaz.
+
 
 ### `MaintenanceDashboard`
 

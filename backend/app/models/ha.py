@@ -8,11 +8,14 @@ The application is **read-only**: these tables belong to Home Assistant and must
 never be written to from here.
 """
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String
+from datetime import datetime
 
-from sqlalchemy.orm import declarative_base
+from sqlalchemy import ForeignKey, String
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
-Base = declarative_base()
+
+class Base(DeclarativeBase):
+    pass
 
 
 class StatisticsMeta(Base):
@@ -20,13 +23,13 @@ class StatisticsMeta(Base):
 
     __tablename__ = "statistics_meta"
 
-    id = Column(Integer, primary_key=True)
-    statistic_id = Column(String, unique=True, index=True)
-    source = Column(String)
-    unit_of_measurement = Column(String)
-    has_mean = Column(Boolean)
-    has_sum = Column(Boolean)
-    name = Column(String)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    statistic_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    source: Mapped[str | None] = mapped_column(String(32))
+    unit_of_measurement: Mapped[str | None] = mapped_column(String(255))
+    has_mean: Mapped[bool | None]
+    has_sum: Mapped[bool | None]
+    name: Mapped[str | None] = mapped_column(String(255))
 
 
 class State(Base):
@@ -34,16 +37,16 @@ class State(Base):
 
     __tablename__ = "states"
 
-    state_id = Column(Integer, primary_key=True)
-    domain = Column(String(64))
-    entity_id = Column(String(255), index=True)
-    state = Column(String(255))
-    attributes = Column(String)
-    event_id = Column(Integer)
-    last_changed = Column(DateTime)
-    last_updated = Column(DateTime)
-    created = Column(DateTime)
-    old_state_id = Column(Integer)
+    state_id: Mapped[int] = mapped_column(primary_key=True)
+    domain: Mapped[str | None] = mapped_column(String(64))
+    entity_id: Mapped[str] = mapped_column(String(255), index=True)
+    state: Mapped[str] = mapped_column(String(255))
+    attributes: Mapped[str | None] = mapped_column(String)
+    event_id: Mapped[int | None]
+    last_changed: Mapped[datetime | None]
+    last_updated: Mapped[datetime]
+    created: Mapped[datetime | None]
+    old_state_id: Mapped[int | None]
 
 
 class Statistics(Base):
@@ -51,13 +54,13 @@ class Statistics(Base):
 
     __tablename__ = "statistics"
 
-    id = Column(Integer, primary_key=True)
-    created = Column(DateTime)
-    start = Column(DateTime, index=True)
-    mean = Column(Float)
-    min = Column(Float)
-    max = Column(Float)
-    last_reset = Column(DateTime)
-    state = Column(Float)
-    sum = Column(Float)
-    metadata_id = Column(Integer, ForeignKey("statistics_meta.id"), index=True)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created: Mapped[datetime | None]
+    start: Mapped[datetime] = mapped_column(index=True)
+    mean: Mapped[float | None]
+    min: Mapped[float | None]
+    max: Mapped[float | None]
+    last_reset: Mapped[datetime | None]
+    state: Mapped[float | None]
+    sum: Mapped[float | None]
+    metadata_id: Mapped[int] = mapped_column(ForeignKey("statistics_meta.id"), index=True)

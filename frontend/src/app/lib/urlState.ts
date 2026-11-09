@@ -47,6 +47,5 @@ export function dashboardUrl(
  * are view state, not navigation, and a shared link is all we need.
  */
 export function updateDashboardUrl(state: Partial<DashboardUrlState>): void {
-  if (typeof window === 'undefined') return;
   window.history.replaceState(null, '', dashboardUrl(state));
 }

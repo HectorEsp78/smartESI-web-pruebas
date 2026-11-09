@@ -1,4 +1,6 @@
 import {
+  Bar,
+  BarChart,
   CartesianGrid,
   Legend,
   Line,
@@ -12,35 +14,51 @@ import {
 import { ChartCard } from '../../ui/ChartCard';
 import { AXIS_LINE, AXIS_TICK, TOOLTIP_STYLE } from '../../../lib/chartTheme';
 import { formatNumber, formatTimestamp } from '../../../lib/format';
+import {
+  AEMET_COLOR,
+  STATION_COLOR,
+  weatherTickPattern,
+  weatherTooltipPattern,
+} from '../../../lib/weather';
 import type {
+  HourlyBiasDto,
   WeatherGranularity,
   WeatherSeriesPointDto,
 } from '../../../types/weather';
 
-interface WeatherChartProps {
+interface SeriesChartProps {
   series: WeatherSeriesPointDto[];
   granularity: WeatherGranularity;
-  isLoading: boolean;
-  error: Error | null;
-  retry: () => void;
 }
 
-function tickPattern(granularity: WeatherGranularity): string {
-  return granularity === 'hour' ? 'HH:mm' : 'd MMM';
+type NumericKey = {
+  [K in keyof WeatherSeriesPointDto]: WeatherSeriesPointDto[K] extends number | null ? K : never;
+}[keyof WeatherSeriesPointDto];
+
+const LEGEND_STYLE = { color: '#334155', fontSize: 12 };
+const CHART_MARGIN = { top: 8, right: 16, bottom: 4, left: 0 };
+
+function noRetry() {
+  return undefined;
 }
 
-function tooltipPattern(granularity: WeatherGranularity): string {
-  return granularity === 'hour' ? 'EEEE d MMM, HH:mm' : 'EEEE d MMM yyyy';
+function hasValues(series: WeatherSeriesPointDto[], key: NumericKey): boolean {
+  return series.some((point) => point[key] !== null);
 }
 
-interface TooltipEntry {
-  name?: string;
-  value?: number | string | null;
-  color?: string;
-  dataKey?: string;
+function timeAxisProps(granularity: WeatherGranularity) {
+  return {
+    dataKey: 'timestamp',
+    tickFormatter: (value: string | number) =>
+      formatTimestamp(String(value), weatherTickPattern(granularity)),
+    tick: AXIS_TICK,
+    tickLine: AXIS_LINE,
+    axisLine: AXIS_LINE,
+    minTickGap: 36,
+  };
 }
 
-function WeatherTooltip({
+function SeriesTooltip({
   active,
   payload,
   label,
@@ -49,344 +67,323 @@ function WeatherTooltip({
   digits,
 }: {
   active?: boolean;
-  payload?: TooltipEntry[];
+  payload?: Array<{ name?: string; value?: number | string | null; color?: string; dataKey?: string }>;
   label?: string | number;
   granularity: WeatherGranularity;
   unit: string;
   digits: number;
 }) {
   if (!active || !payload?.length || label === undefined) return null;
+  const suffix = unit ? ` ${unit}` : '';
   return (
     <div style={TOOLTIP_STYLE} className="px-3 py-2">
       <p className="mb-1 font-semibold">
-        {formatTimestamp(String(label), tooltipPattern(granularity))}
+        {formatTimestamp(String(label), weatherTooltipPattern(granularity))}
       </p>
       {payload.map((entry) => (
         <p key={entry.dataKey ?? entry.name} style={{ color: entry.color }}>
           {entry.name}:{' '}
           {entry.value === null || entry.value === undefined
-            ? '—'
-            : `${formatNumber(Number(entry.value), digits)} ${unit}`}
+            ? 'sin dato'
+            : `${formatNumber(Number(entry.value), digits)}${suffix}`}
         </p>
       ))}
     </div>
   );
 }
 
-function commonAxisProps(granularity: WeatherGranularity) {
-  return {
-    dataKey: 'timestamp',
-    tickFormatter: (value: string | number) =>
-      formatTimestamp(String(value), tickPattern(granularity)),
-    tick: AXIS_TICK,
-    tickLine: AXIS_LINE,
-    axisLine: AXIS_LINE,
-    minTickGap: 28,
-  };
-}
-
-export function WeatherTemperatureChart({
+/** A station line and an AEMET line on the same axis. A gap stays a gap. */
+function ComparisonChart({
   series,
   granularity,
-  isLoading,
-  error,
-  retry,
-}: WeatherChartProps) {
-  const hasTemperature = series.some((point) => point.temperature_c !== null);
-  const hasIndoor = series.some((point) => point.indoor_temperature_c !== null);
-  const hasAemet = series.some((point) => point.aemet_temperature_c !== null);
-
+  title,
+  subtitle,
+  unit,
+  stationKey,
+  aemetKey,
+  domain,
+  digits,
+}: SeriesChartProps & {
+  title: string;
+  subtitle: string;
+  unit: string;
+  stationKey: NumericKey;
+  aemetKey: NumericKey;
+  domain: [number | string, number | string];
+  digits: number;
+}) {
   return (
     <ChartCard
-      title="Temperatura"
-      subtitle="Estación, interior de referencia y AEMET"
-      unit="°C"
-      isLoading={isLoading}
-      error={error}
-      isEmpty={!hasTemperature}
-      emptyMessage="Sin datos de temperatura para el periodo seleccionado."
-      onRetry={retry}
-      height={270}
+      title={title}
+      subtitle={subtitle}
+      unit={unit}
+      isLoading={false}
+      error={null}
+      isEmpty={!hasValues(series, stationKey) && !hasValues(series, aemetKey)}
+      onRetry={noRetry}
+      height={300}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={series} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+        <LineChart data={series} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis {...commonAxisProps(granularity)} />
+          <XAxis {...timeAxisProps(granularity)} />
           <YAxis
-            domain={['auto', 'auto']}
+            domain={domain}
             tickFormatter={(value) => formatNumber(Number(value), 0)}
             tick={AXIS_TICK}
             tickLine={AXIS_LINE}
             axisLine={AXIS_LINE}
-            width={40}
+            width={48}
           />
-          <ReferenceLine y={30} stroke="#cf6c2e" strokeDasharray="4 4" />
-          <ReferenceLine y={10} stroke="#0497d7" strokeDasharray="4 4" />
           <Tooltip
-            content={
-              <WeatherTooltip
-                granularity={granularity}
-                unit="°C"
-                digits={1}
-              />
-            }
+            content={<SeriesTooltip granularity={granularity} unit={unit} digits={digits} />}
           />
-          <Legend wrapperStyle={{ color: '#334155', fontSize: 12 }} />
+          <Legend wrapperStyle={LEGEND_STYLE} />
           <Line
             type="monotone"
-            dataKey="temperature_c"
-            name="Estación"
-            stroke="#0497d7"
+            dataKey={stationKey}
+            name="Estación del centro"
+            stroke={STATION_COLOR}
             strokeWidth={2}
             dot={false}
-            connectNulls
+            connectNulls={false}
             isAnimationActive={false}
           />
-          {hasIndoor && (
-            <Line
-              type="monotone"
-              dataKey="indoor_temperature_c"
-              name="Interior (sensor.ambiente)"
-              stroke="#2b8b57"
-              strokeWidth={1.5}
-              dot={false}
-              connectNulls
-              isAnimationActive={false}
-            />
-          )}
-          {hasAemet && (
-            <Line
-              type="monotone"
-              dataKey="aemet_temperature_c"
-              name="AEMET (referencia)"
-              stroke="#94a3b8"
-              strokeWidth={1.5}
-              strokeDasharray="5 4"
-              dot={false}
-              connectNulls
-              isAnimationActive={false}
-            />
-          )}
+          <Line
+            type="monotone"
+            dataKey={aemetKey}
+            name="AEMET Ciudad Real"
+            stroke={AEMET_COLOR}
+            strokeWidth={2}
+            strokeDasharray="5 4"
+            dot={false}
+            connectNulls={false}
+            isAnimationActive={false}
+          />
         </LineChart>
       </ResponsiveContainer>
     </ChartCard>
   );
 }
 
-export function WeatherHumidityChart({
-  series,
-  granularity,
-  isLoading,
-  error,
-  retry,
-}: WeatherChartProps) {
-  const hasHumidity = series.some((point) => point.humidity_pct !== null);
-  const hasIndoor = series.some((point) => point.indoor_humidity_pct !== null);
-  const hasAemet = series.some((point) => point.aemet_humidity_pct !== null);
+export function WeatherTemperatureChart(props: SeriesChartProps) {
+  return (
+    <ComparisonChart
+      {...props}
+      title="Temperatura"
+      subtitle="Estación del centro frente a AEMET"
+      unit="°C"
+      stationKey="station_temperature_c"
+      aemetKey="aemet_temperature_c"
+      domain={['auto', 'auto']}
+      digits={1}
+    />
+  );
+}
+
+export function WeatherHumidityChart(props: SeriesChartProps) {
+  return (
+    <ComparisonChart
+      {...props}
+      title="Humedad relativa"
+      subtitle="Estación del centro frente a AEMET"
+      unit="%"
+      stationKey="station_humidity_pct"
+      aemetKey="aemet_humidity_pct"
+      domain={[0, 100]}
+      digits={1}
+    />
+  );
+}
+
+export function WeatherPressureChart(props: SeriesChartProps) {
+  return (
+    <ComparisonChart
+      {...props}
+      title="Presión"
+      subtitle="Ambas a la altitud del observatorio de AEMET (626 m)"
+      unit="hPa"
+      stationKey="station_pressure_hpa"
+      aemetKey="aemet_pressure_hpa"
+      domain={['auto', 'auto']}
+      digits={1}
+    />
+  );
+}
+
+export function WeatherHourlyBiasChart({ hourlyBias }: { hourlyBias: HourlyBiasDto[] }) {
+  const data = hourlyBias.map((item) => ({
+    hour: `${String(item.hour).padStart(2, '0')}:00`,
+    bias: item.temperature_bias_c,
+  }));
 
   return (
     <ChartCard
-      title="Humedad relativa"
-      subtitle="Estación, interior de referencia y AEMET"
-      unit="%"
-      isLoading={isLoading}
-      error={error}
-      isEmpty={!hasHumidity}
-      emptyMessage="Sin datos de humedad para el periodo seleccionado."
-      onRetry={retry}
-      height={270}
+      title="Diferencia de temperatura por hora del día"
+      subtitle="Estación − AEMET, en hora local: un pico de día apunta al efecto del sol"
+      unit="°C"
+      isLoading={false}
+      error={null}
+      isEmpty={!data.some((item) => item.bias !== null)}
+      emptyMessage="Sin horas comparables con AEMET en este periodo."
+      onRetry={noRetry}
+      height={300}
     >
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={series} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+        <BarChart data={data} margin={CHART_MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+          <XAxis
+            dataKey="hour"
+            tick={AXIS_TICK}
+            tickLine={AXIS_LINE}
+            axisLine={AXIS_LINE}
+            interval={2}
+          />
+          <YAxis
+            tickFormatter={(value) => formatNumber(Number(value), 0)}
+            tick={AXIS_TICK}
+            tickLine={AXIS_LINE}
+            axisLine={AXIS_LINE}
+            width={48}
+          />
+          <ReferenceLine y={0} stroke="#64748b" />
+          <Tooltip
+            contentStyle={TOOLTIP_STYLE}
+            formatter={(value) => [`${formatNumber(Number(value), 1)} °C`, 'Diferencia']}
+            cursor={{ fill: 'rgba(4, 151, 215, 0.08)' }}
+          />
+          <Bar dataKey="bias" name="Diferencia" fill={STATION_COLOR} isAnimationActive={false} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+export function WeatherRainChart({ series, granularity }: SeriesChartProps) {
+  return (
+    <ChartCard
+      title="Lluvia en Ciudad Real"
+      subtitle={`Datos de AEMET, por ${granularity === 'hour' ? 'hora' : 'día'}; la estación no mide lluvia`}
+      unit="mm"
+      isLoading={false}
+      error={null}
+      isEmpty={!hasValues(series, 'aemet_precipitation_mm')}
+      emptyMessage="Sin datos de lluvia de AEMET en este periodo."
+      onRetry={noRetry}
+      height={260}
+    >
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+        <BarChart data={series} margin={CHART_MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+          <XAxis {...timeAxisProps(granularity)} />
+          <YAxis
+            tickFormatter={(value) => formatNumber(Number(value), 0)}
+            tick={AXIS_TICK}
+            tickLine={AXIS_LINE}
+            axisLine={AXIS_LINE}
+            width={48}
+          />
+          <Tooltip
+            content={<SeriesTooltip granularity={granularity} unit="mm" digits={1} />}
+            cursor={{ fill: 'rgba(179, 1, 57, 0.08)' }}
+          />
+          <Bar
+            dataKey="aemet_precipitation_mm"
+            name="Lluvia"
+            fill={AEMET_COLOR}
+            isAnimationActive={false}
+          />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+export function WeatherPmChart({ series, granularity }: SeriesChartProps) {
+  const lines: Array<{ key: NumericKey; name: string; color: string }> = [
+    { key: 'pm1', name: 'PM1', color: '#2b8b57' },
+    { key: 'pm25', name: 'PM2.5', color: STATION_COLOR },
+    { key: 'pm10', name: 'PM10', color: '#cf6c2e' },
+  ];
+
+  return (
+    <ChartCard
+      title="Partículas"
+      subtitle="Índice relativo de la estación: no publica unidad ni se compara con umbrales sanitarios"
+      unit="índice"
+      isLoading={false}
+      error={null}
+      isEmpty={!lines.some((line) => hasValues(series, line.key))}
+      emptyMessage="Sin datos de partículas en este periodo."
+      onRetry={noRetry}
+      height={260}
+    >
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+        <LineChart data={series} margin={CHART_MARGIN}>
           <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis {...commonAxisProps(granularity)} />
+          <XAxis {...timeAxisProps(granularity)} />
+          <YAxis
+            tickFormatter={(value) => formatNumber(Number(value), 0)}
+            tick={AXIS_TICK}
+            tickLine={AXIS_LINE}
+            axisLine={AXIS_LINE}
+            width={56}
+          />
+          <Tooltip content={<SeriesTooltip granularity={granularity} unit="" digits={0} />} />
+          <Legend wrapperStyle={LEGEND_STYLE} />
+          {lines.map((line) => (
+            <Line
+              key={line.key}
+              type="monotone"
+              dataKey={line.key}
+              name={line.name}
+              stroke={line.color}
+              strokeWidth={1.5}
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          ))}
+        </LineChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+export function WeatherBatteryChart({ series, granularity }: SeriesChartProps) {
+  return (
+    <ChartCard
+      title="Batería de la estación"
+      subtitle="Evolución en el periodo"
+      unit="%"
+      isLoading={false}
+      error={null}
+      isEmpty={!hasValues(series, 'battery_pct')}
+      emptyMessage="Sin datos de batería en este periodo."
+      onRetry={noRetry}
+      height={260}
+    >
+      <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+        <LineChart data={series} margin={CHART_MARGIN}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+          <XAxis {...timeAxisProps(granularity)} />
           <YAxis
             domain={[0, 100]}
             tickFormatter={(value) => formatNumber(Number(value), 0)}
             tick={AXIS_TICK}
             tickLine={AXIS_LINE}
             axisLine={AXIS_LINE}
-            width={40}
-          />
-          <ReferenceLine y={30} stroke="#10b981" strokeDasharray="4 4" />
-          <ReferenceLine y={80} stroke="#cf6c2e" strokeDasharray="4 4" />
-          <Tooltip
-            content={
-              <WeatherTooltip granularity={granularity} unit="%" digits={1} />
-            }
-          />
-          <Legend wrapperStyle={{ color: '#334155', fontSize: 12 }} />
-          <Line
-            type="monotone"
-            dataKey="humidity_pct"
-            name="Estación"
-            stroke="#0891b2"
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-            isAnimationActive={false}
-          />
-          {hasIndoor && (
-            <Line
-              type="monotone"
-              dataKey="indoor_humidity_pct"
-              name="Interior (sensor.ambiente)"
-              stroke="#2b8b57"
-              strokeWidth={1.5}
-              dot={false}
-              connectNulls
-              isAnimationActive={false}
-            />
-          )}
-          {hasAemet && (
-            <Line
-              type="monotone"
-              dataKey="aemet_humidity_pct"
-              name="AEMET (referencia)"
-              stroke="#94a3b8"
-              strokeWidth={1.5}
-              strokeDasharray="5 4"
-              dot={false}
-              connectNulls
-              isAnimationActive={false}
-            />
-          )}
-        </LineChart>
-      </ResponsiveContainer>
-    </ChartCard>
-  );
-}
-
-export function WeatherPressureChart({
-  series,
-  granularity,
-  isLoading,
-  error,
-  retry,
-}: WeatherChartProps) {
-  const hasPressure = series.some((point) => point.pressure_hpa !== null);
-
-  return (
-    <ChartCard
-      title="Presión atmosférica"
-      subtitle="Presión de la estación reducida al nivel del mar"
-      unit="hPa"
-      isLoading={isLoading}
-      error={error}
-      isEmpty={!hasPressure}
-      emptyMessage="Sin datos de presión para el periodo seleccionado."
-      onRetry={retry}
-      height={270}
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={series} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis {...commonAxisProps(granularity)} />
-          <YAxis
-            domain={['auto', 'auto']}
-            tickFormatter={(value) => formatNumber(Number(value), 0)}
-            tick={AXIS_TICK}
-            tickLine={AXIS_LINE}
-            axisLine={AXIS_LINE}
             width={48}
           />
-          <Tooltip
-            content={
-              <WeatherTooltip
-                granularity={granularity}
-                unit="hPa"
-                digits={1}
-              />
-            }
-          />
-          <Legend wrapperStyle={{ color: '#334155', fontSize: 12 }} />
+          <Tooltip content={<SeriesTooltip granularity={granularity} unit="%" digits={0} />} />
           <Line
             type="monotone"
-            dataKey="pressure_hpa"
-            name="Presión (nivel del mar)"
-            stroke="#1f6f9a"
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-            isAnimationActive={false}
-          />
-        </LineChart>
-      </ResponsiveContainer>
-    </ChartCard>
-  );
-}
-
-export function WeatherPmChart({
-  series,
-  granularity,
-  isLoading,
-  error,
-  retry,
-}: WeatherChartProps) {
-  const hasPm = series.some((point) => point.pm25 !== null);
-
-  return (
-    <ChartCard
-      title="Partículas en suspensión"
-      subtitle="Índice relativo del sensor; no se compara con umbrales sanitarios"
-      unit="índice"
-      isLoading={isLoading}
-      error={error}
-      isEmpty={!hasPm}
-      emptyMessage="Sin datos de partículas para el periodo seleccionado."
-      onRetry={retry}
-      height={270}
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={series} margin={{ top: 8, right: 16, bottom: 4, left: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-          <XAxis {...commonAxisProps(granularity)} />
-          <YAxis
-            domain={[0, 'auto']}
-            tickFormatter={(value) => formatNumber(Number(value), 0)}
-            tick={AXIS_TICK}
-            tickLine={AXIS_LINE}
-            axisLine={AXIS_LINE}
-            width={48}
-          />
-          <Tooltip
-            content={
-              <WeatherTooltip
-                granularity={granularity}
-                unit="índice"
-                digits={0}
-              />
-            }
-          />
-          <Legend wrapperStyle={{ color: '#334155', fontSize: 12 }} />
-          <Line
-            type="monotone"
-            dataKey="pm1"
-            name="PM1"
+            dataKey="battery_pct"
+            name="Batería"
             stroke="#2b8b57"
-            strokeWidth={1.5}
-            dot={false}
-            connectNulls
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="pm25"
-            name="PM2.5"
-            stroke="#cf6c2e"
             strokeWidth={2}
             dot={false}
-            connectNulls
-            isAnimationActive={false}
-          />
-          <Line
-            type="monotone"
-            dataKey="pm10"
-            name="PM10"
-            stroke="#b30139"
-            strokeWidth={1.5}
-            dot={false}
-            connectNulls
+            connectNulls={false}
             isAnimationActive={false}
           />
         </LineChart>

@@ -14,7 +14,14 @@ import asyncio
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from app.core.clock import local_tz
+from app.core.clock import (
+    HOUR_SECONDS,
+    floor_hour_epoch,
+    local_hour_from_epoch,
+    local_hour_from_utc,
+    to_utc_naive,
+    utc_now,
+)
 from app.core.environment_map import (
     AMBIENT_TEMPERATURE_ENTITY,
     CO2_MAX_PPM,
@@ -22,16 +29,12 @@ from app.core.environment_map import (
     ENVIRONMENT_ROOMS,
     GAS_COST_ENTITY,
     GAS_M3_ENTITY,
-    HUMIDITY_MAX_PCT,
-    HUMIDITY_MIN_PCT,
-    TEMPERATURE_MAX_C,
-    TEMPERATURE_MIN_C,
+    parse_presence,
 )
 from app.db import repository
 from app.db.session import AsyncSessionLocal
 
 _BASELINE_LOOKBACK = timedelta(days=7)
-_HOUR_SECONDS = 3600
 
 
 @dataclass
@@ -45,56 +48,6 @@ class EnvironmentDatabaseData:
     # Cumulative gas sums, kept as raw rows so the service can split the
     # increments into local chart buckets.
     gas_sums: dict[str, list[tuple[datetime, float]]] = field(default_factory=dict)
-
-
-def _to_utc_naive(value: datetime) -> datetime:
-    return value.astimezone(timezone.utc).replace(tzinfo=None)
-
-
-def _floor_epoch(value_utc_naive: datetime) -> int:
-    seconds = int(value_utc_naive.replace(tzinfo=timezone.utc).timestamp())
-    return seconds // _HOUR_SECONDS * _HOUR_SECONDS
-
-
-def _local_hour_from_epoch(epoch_seconds: int) -> datetime:
-    return datetime.fromtimestamp(epoch_seconds, tz=timezone.utc).astimezone(local_tz()).replace(
-        minute=0, second=0, microsecond=0
-    )
-
-
-def _local_hour(value_utc_naive: datetime) -> datetime:
-    return _local_hour_from_epoch(_floor_epoch(value_utc_naive))
-
-
-def parse_float(
-    state: str | None,
-    minimum: float,
-    maximum: float,
-) -> float | None:
-    """Numeric value of a raw state, rejecting resets and non-numeric values."""
-    try:
-        value = float(state)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return None
-    if value < minimum or value > maximum:
-        return None
-    return value
-
-
-def parse_presence(state: str | None) -> bool | None:
-    """Home Assistant binary and motion states → ``True``/``False``.
-
-    ``sensor.movimiento_*`` uses ``Sí``/``No``; the generic ``sensor.presencia*``
-    entities use ``1``/``0``. Unknown values are not treated as "empty".
-    """
-    if state is None:
-        return None
-    value = state.strip().lower()
-    if value in {"sí", "si", "1", "on", "yes", "true"}:
-        return True
-    if value in {"no", "0", "off", "false"}:
-        return False
-    return None
 
 
 def _hourly_presence(
@@ -127,9 +80,9 @@ def _hourly_presence(
             return
         segment_cursor = segment_start
         while segment_cursor < segment_end:
-            epoch = _floor_epoch(segment_cursor)
+            epoch = floor_hour_epoch(segment_cursor)
             next_hour = datetime.fromtimestamp(
-                epoch + _HOUR_SECONDS, tz=timezone.utc
+                epoch + HOUR_SECONDS, tz=timezone.utc
             ).replace(tzinfo=None)
             chunk_end = min(segment_end, next_hour)
             seconds = max(0.0, (chunk_end - segment_cursor).total_seconds())
@@ -154,7 +107,7 @@ def _hourly_presence(
     # letting the last one overwrite the other.
     merged: dict[datetime, tuple[float, float]] = {}
     for epoch, total in total_seconds.items():
-        key = _local_hour_from_epoch(epoch)
+        key = local_hour_from_epoch(epoch)
         on, previous_total = merged.get(key, (0.0, 0.0))
         merged[key] = (on + on_seconds.get(epoch, 0.0), previous_total + total)
 
@@ -192,8 +145,8 @@ async def load_environment_data(
     end_local: datetime,
 ) -> EnvironmentDatabaseData:
     """Read all sensors needed by the environment service in a few indexed queries."""
-    start_utc = _to_utc_naive(start_local)
-    end_utc = _to_utc_naive(end_local)
+    start_utc = to_utc_naive(start_local)
+    end_utc = to_utc_naive(end_local)
 
     statistic_ids = sorted(
         {
@@ -248,10 +201,11 @@ async def load_environment_data(
             motion_baselines = await repository.fetch_last_state_snapshots_before(
                 session, motion_ids, start_utc, _BASELINE_LOOKBACK
             )
+            # "Current" values always mean right now, even for a past period.
             latest = await repository.fetch_latest_state_snapshots(
                 session,
                 latest_ids,
-                end_utc + timedelta(minutes=1),
+                utc_now() + timedelta(minutes=1),
                 _BASELINE_LOOKBACK + timedelta(days=14),
             )
             gas_rows = await repository.fetch_statistics_sums(
@@ -270,22 +224,27 @@ async def load_environment_data(
 
     statistics: dict[str, dict[datetime, float]] = {}
     for statistic_id, start, mean in stats_rows:
-        statistics.setdefault(statistic_id, {})[_local_hour(start)] = mean
+        statistics.setdefault(statistic_id, {})[local_hour_from_utc(start)] = mean
 
     co2: dict[str, dict[datetime, float]] = {}
     for entity_id, bucket, mean in co2_rows:
-        co2.setdefault(entity_id, {})[_local_hour_from_epoch(bucket)] = mean
+        co2.setdefault(entity_id, {})[local_hour_from_epoch(bucket)] = mean
 
     by_entity: dict[str, list[tuple[str, datetime, str]]] = {}
     for entity_id, last_updated, state in motion_rows:
         by_entity.setdefault(entity_id, []).append((entity_id, last_updated, state))
 
     presence: dict[str, dict[datetime, float]] = {}
-    for entity_id, rows in by_entity.items():
+    for entity_id in motion_ids:
+        rows = by_entity.get(entity_id, [])
         baseline = motion_baselines.get(entity_id, (None, None))[0]
-        series = _hourly_presence(rows, baseline, start_utc, end_utc)
-        if series:
-            presence[entity_id] = series
+        # A sensor only writes on change: without rows it kept its last known
+        # state for the whole period. With no known state there is nothing to
+        # report, which is different from a room that stayed empty.
+        if rows or parse_presence(baseline) is not None:
+            series = _hourly_presence(rows, baseline, start_utc, end_utc)
+            if series:
+                presence[entity_id] = series
 
     gas_sums: dict[str, list[tuple[datetime, float]]] = {}
     for entity_id, start, total in gas_rows:

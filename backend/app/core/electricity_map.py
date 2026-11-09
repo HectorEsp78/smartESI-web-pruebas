@@ -27,6 +27,11 @@ from typing import Literal
 # against this value.
 SITE_ELECTRICITY_STATISTIC: str = "sensor.cuadro_general"
 
+# Real monetary counter for the main panel (EUR, cumulative). It lives in the
+# raw recorder ``states`` table because its long-term statistics are corrupted.
+# It is used to derive the effective €/kWh actually applied over a period.
+SITE_COST_ENTITY: str = "sensor.cuadro_general_cost"
+
 # First date with usable long-term statistics in the recorder database.
 ELECTRICITY_DATA_START: date = date(2023, 12, 22)
 

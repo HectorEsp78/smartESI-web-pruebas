@@ -1,28 +1,21 @@
 import { useQuery } from '@tanstack/react-query';
 import { fetchWeatherOverview } from '../api/weather';
+import type { WeatherPeriod } from '../api/weather';
 import type { WeatherOverviewDto } from '../types/weather';
+import { STALE_TIME, toQueryResult } from './queryResult';
+import type { QueryResult } from './queryResult';
 
-interface Result {
-  data: WeatherOverviewDto | null;
-  isLoading: boolean;
-  isFetching: boolean;
-  error: Error | null;
-  retry: () => void;
-}
-
-const STALE_TIME = 60 * 1000;
-
-export function useWeatherOverview(days: number): Result {
-  const { data = null, isLoading, isFetching, error, refetch } = useQuery({
-    queryKey: ['weatherOverview', days],
-    queryFn: ({ signal }) => fetchWeatherOverview(days, signal),
-    staleTime: STALE_TIME,
-  });
-  return {
-    data,
-    isLoading,
-    isFetching,
-    error: error as Error | null,
-    retry: refetch,
-  };
+export function useWeatherOverview(period: WeatherPeriod | null): QueryResult<WeatherOverviewDto> {
+  return toQueryResult(
+    useQuery({
+      queryKey: ['weatherOverview', period],
+      queryFn: ({ signal }) => {
+        if (!period) throw new Error('Periodo no válido.');
+        return fetchWeatherOverview(period, signal);
+      },
+      enabled: period !== null,
+      staleTime: STALE_TIME,
+      placeholderData: (previous) => previous,
+    }),
+  );
 }

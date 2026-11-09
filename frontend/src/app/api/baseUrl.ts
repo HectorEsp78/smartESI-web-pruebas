@@ -34,5 +34,3 @@ export function resolveApiPath(path: string): string {
 
   return new URL(path, baseUrl).toString();
 }
-
-export { resolveApiBaseUrl };

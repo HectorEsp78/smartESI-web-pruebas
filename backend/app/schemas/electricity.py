@@ -89,6 +89,8 @@ class ElectricityResponse(BaseModel):
     unmetered_total: float
     sector_coverage: float
     data_start: date
+    # Effective €/kWh applied by the real main-panel counter over this period.
+    price_eur_per_kwh: float
 
 
 class ElectricityComparePoint(BaseModel):
@@ -120,6 +122,7 @@ class ElectricityCompareResponse(BaseModel):
     period_b: ElectricityStats
     baseline_hourly: float
     delta_pct: float
+    price_eur_per_kwh: float | None = None
     series: list[ElectricityComparePoint]
 
 
@@ -162,6 +165,7 @@ class ElectricityCompareManyResponse(BaseModel):
     # False when the periods do not have the same number of buckets; the chart
     # then aligns them from the start and leaves the missing buckets empty.
     equal_length: bool
+    price_eur_per_kwh: float | None = None
     series: list[ElectricityCompareManyPoint]
 
 

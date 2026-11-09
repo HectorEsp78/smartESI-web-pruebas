@@ -13,8 +13,8 @@ import {
 import { periodDays } from './electricity';
 
 describe('environment period', () => {
-  it('defaults to seven inclusive days', () => {
-    expect(periodDays(defaultEnvironmentPeriod())).toBe(7);
+  it('defaults to today only', () => {
+    expect(periodDays(defaultEnvironmentPeriod())).toBe(1);
   });
 
   it('rejects reversed and longer-than-a-year periods', () => {

@@ -1,102 +1,191 @@
+import json
 import unittest
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
+from app.core.clock import local_now, to_utc_naive
+from app.core.weather_map import (
+    AEMET_HUMIDITY_ENTITY,
+    AEMET_PRESSURE_ENTITY,
+    AEMET_TEMPERATURE_ENTITY,
+)
 from app.main import app
 from app.services import weather_service
+from app.services.weather_service import (
+    _build_availability,
+    _build_comparison,
+    _Dataset,
+    _observation_hour,
+    _parse_station,
+    _StationSample,
+    resolve_period,
+)
 
 client = TestClient(app)
+URL = "/api/v1/weather/overview"
 
 
-class WeatherEndpointsTest(unittest.TestCase):
+def _iso(day: date) -> str:
+    return day.isoformat()
+
+
+class WeatherEndpointTest(unittest.TestCase):
     def setUp(self):
         weather_service.clear_cache()
 
     def tearDown(self):
         weather_service.clear_cache()
 
-    def test_overview_has_current_summary_series_and_crosses(self):
-        response = client.get("/api/v1/weather/overview", params={"days": 30})
+    def test_default_period_compares_the_station_with_aemet(self):
+        response = client.get(URL)
         self.assertEqual(response.status_code, 200)
         body = response.json()
 
         self.assertEqual(body["data_source"], "mock")
-        self.assertEqual(body["days"], 30)
         self.assertEqual(body["granularity"], "day")
+        self.assertEqual(len(body["series"]), 30)
         self.assertEqual(body["current"]["status"], "ok")
-        self.assertIsNotNone(body["current"]["temperature_c"])
-        self.assertIsNotNone(body["current"]["humidity_pct"])
-        self.assertIsNotNone(body["current"]["pressure_hpa"])
-        self.assertIsNotNone(body["current"]["dew_point_c"])
-        self.assertIsNotNone(body["current"]["absolute_humidity_g_m3"])
+        self.assertFalse(body["aemet_latest"]["stale"])
+        self.assertEqual(body["aemet_availability"]["coverage"], "complete")
 
-        self.assertGreater(body["summary"]["samples"], 0)
-        self.assertGreater(body["summary"]["coverage_pct"], 0)
-        self.assertLessEqual(body["summary"]["coverage_pct"], 100)
-        self.assertIsNotNone(body["summary"]["temperature_avg_c"])
-        self.assertIsNotNone(body["summary"]["heating_degree_days"])
+        comparison = body["comparison"]
+        for metric in ("temperature", "humidity", "pressure"):
+            self.assertGreater(comparison[metric]["samples"], 0)
+            self.assertIsNotNone(comparison[metric]["bias"])
+        self.assertEqual(len(comparison["hourly_bias"]), 24)
+        # The mock station is warmer than AEMET under the sun.
+        self.assertGreater(
+            comparison["temperature"]["daytime_bias"],
+            comparison["temperature"]["nighttime_bias"],
+        )
 
-        self.assertEqual(len(body["daily"]), 31)
-        self.assertGreater(len(body["series"]), 0)
-        start = datetime.fromisoformat(body["start"].replace("Z", "+00:00"))
-        end = datetime.fromisoformat(body["end"].replace("Z", "+00:00"))
-        for point in body["series"]:
-            timestamp = datetime.fromisoformat(point["timestamp"].replace("Z", "+00:00"))
-            # Daily buckets are stamped at local midnight, which can fall just
-            # before the exact start instant of the first partial day.
-            self.assertGreaterEqual(timestamp, start - timedelta(days=1))
-            self.assertLessEqual(timestamp, end + timedelta(days=1))
+    def test_short_periods_keep_hourly_detail(self):
+        end = local_now().date() - timedelta(days=1)
+        start = end - timedelta(days=2)
+        body = client.get(URL, params={"start": _iso(start), "end": _iso(end)}).json()
 
-        self.assertTrue(body["indoor_cross"]["available"])
-        self.assertTrue(body["aemet_cross"]["available"])
-        self.assertTrue(body["energy_cross"]["available"])
-        self.assertTrue(body["pm_cross"]["available"])
-        self.assertEqual(len(body["aemet_cross"]["hourly_bias"]), 24)
-        self.assertTrue(body["pm_cross"]["caveat"])
-        self.assertTrue(body["notes"])
+        self.assertEqual(body["granularity"], "hour")
+        self.assertEqual(len(body["series"]), 72)
+        self.assertIsNotNone(body["series"][0]["aemet_temperature_c"])
 
-    def test_allowed_periods_and_granularity(self):
-        for days, granularity in ((7, "hour"), (30, "day"), (90, "day")):
-            with self.subTest(days=days):
-                response = client.get(
-                    "/api/v1/weather/overview", params={"days": days}
-                )
-                self.assertEqual(response.status_code, 200)
-                body = response.json()
-                self.assertEqual(body["days"], days)
-                self.assertEqual(body["granularity"], granularity)
-                self.assertEqual(len(body["daily"]), days + 1)
-                if days == 7:
-                    self.assertGreaterEqual(len(body["series"]), 160)
+    def test_invalid_periods_are_rejected(self):
+        today = local_now().date()
+        cases = (
+            {"start": _iso(today), "end": _iso(today - timedelta(days=1))},
+            {"end": _iso(today + timedelta(days=1))},
+            {"start": _iso(today - timedelta(days=400)), "end": _iso(today)},
+            {"start": "0001-01-01", "end": "0001-01-02"},
+        )
+        for params in cases:
+            with self.subTest(params=params):
+                self.assertEqual(client.get(URL, params=params).status_code, 422)
 
-        response = client.get("/api/v1/weather/overview", params={"days": 14})
-        self.assertEqual(response.status_code, 422)
-        self.assertIn("7, 30, 90", response.json()["detail"])
 
-    def test_mock_energy_cross_does_not_exclude_normal_days(self):
-        response = client.get("/api/v1/weather/overview", params={"days": 30})
-        self.assertEqual(response.status_code, 200)
-        energy = response.json()["energy_cross"]
-        self.assertGreater(energy["days"], 0)
-        self.assertEqual(energy["excluded_days"], 0)
-        self.assertIsNotNone(energy["gas_m3"])
-        self.assertIsNotNone(energy["electricity_kwh"])
-        self.assertIsNotNone(energy["temperature_gas_correlation"])
+class WeatherParsingTest(unittest.TestCase):
+    def test_station_reading_comes_from_state_and_attributes(self):
+        attributes = json.dumps(
+            {"Humidity": 62.5, "Pressure": 1015.2, "PM1": 10, "PM2.5": 12, "PM10": 13, "Battery": 80}
+        )
+        sample = _parse_station(datetime(2026, 1, 1), "12.5", attributes)
+        self.assertEqual(sample.temperature_c, 12.5)
+        self.assertEqual(sample.humidity_pct, 62.5)
+        self.assertEqual(sample.pm25, 12)
 
-    def test_mock_aemet_cross_has_day_and_night_bias(self):
-        response = client.get("/api/v1/weather/overview", params={"days": 30})
-        self.assertEqual(response.status_code, 200)
-        cross = response.json()["aemet_cross"]
-        self.assertIsNotNone(cross["daytime_temperature_bias_c"])
-        self.assertIsNotNone(cross["nighttime_temperature_bias_c"])
-        self.assertIsNotNone(cross["temperature_correlation"])
-        self.assertIsNotNone(cross["pressure_bias_hpa"])
+    def test_recorder_reset_rows_are_not_observations(self):
+        attributes = '{"state_class":"measurement","friendly_name":"meteo"}'
+        self.assertIsNone(_parse_station(datetime(2026, 1, 1), "0", attributes))
 
-    def test_overview_is_deterministic_for_the_same_window(self):
-        first = client.get("/api/v1/weather/overview", params={"days": 30}).json()
-        second = client.get("/api/v1/weather/overview", params={"days": 30}).json()
-        self.assertEqual(first["summary"], second["summary"])
-        self.assertEqual(first["series"], second["series"])
-        self.assertEqual(first["daily"], second["daily"])
-        self.assertEqual(first["energy_cross"], second["energy_cross"])
+    def test_non_finite_values_are_ignored(self):
+        attributes = json.dumps({"Humidity": "nan", "Pressure": 1015.0})
+        sample = _parse_station(datetime(2026, 1, 1), "nan", attributes)
+        self.assertIsNone(sample.temperature_c)
+        self.assertIsNone(sample.humidity_pct)
+
+    def test_aemet_rows_use_the_observation_time(self):
+        written = datetime(2026, 10, 29, 17, 29, 51)
+        attributes = '{"last_update":"2026-10-29T17:00:00+0000"}'
+        self.assertEqual(_observation_hour(written, attributes), datetime(2026, 10, 29, 17))
+        self.assertEqual(_observation_hour(written, None), datetime(2026, 10, 29, 17))
+        self.assertEqual(
+            _observation_hour(written, '{"last_update":"no-date"}'), datetime(2026, 10, 29, 17)
+        )
+
+
+class WeatherComparisonTest(unittest.TestCase):
+    """A day of 2026 with AEMET available only from 06:00 to 12:00 UTC."""
+
+    DAY = date(2026, 1, 15)
+
+    def setUp(self):
+        self.period = resolve_period(self.DAY, self.DAY)
+        self.start = to_utc_naive(self.period.start)
+
+    def _dataset(self) -> _Dataset:
+        station = [
+            _StationSample(
+                timestamp=self.start + timedelta(minutes=15 * index),
+                temperature_c=20.0,
+                humidity_pct=100.0 if index < 12 else 50.0,
+                pressure_hpa=1013.25,
+            )
+            for index in range(96)
+        ]
+        hours = [self.start + timedelta(hours=offset) for offset in range(7, 14)]
+        return _Dataset(
+            data_source="mock",
+            station=station,
+            aemet={
+                AEMET_TEMPERATURE_ENTITY: dict.fromkeys(hours, 18.0),
+                AEMET_HUMIDITY_ENTITY: dict.fromkeys(hours, 40.0),
+                AEMET_PRESSURE_ENTITY: dict.fromkeys(hours, 940.0),
+            },
+        )
+
+    def test_only_hours_with_both_sources_are_compared(self):
+        comparison = _build_comparison(self._dataset(), self.period)
+
+        self.assertEqual(comparison.temperature.samples, 7)
+        self.assertEqual(comparison.temperature.bias, 2.0)
+        self.assertEqual(comparison.temperature.mean_absolute_error, 2.0)
+        self.assertEqual(comparison.humidity.bias, 10.0)
+        self.assertEqual(comparison.humidity.saturated_pct, 0.0)
+
+    def test_aemet_is_paired_with_the_hour_that_just_finished(self):
+        dataset = self._dataset()
+        # Only the hour before the 07:00 observation differs.
+        for sample in dataset.station:
+            if self.start + timedelta(hours=6) <= sample.timestamp < self.start + timedelta(hours=7):
+                sample.temperature_c = 30.0
+
+        comparison = _build_comparison(dataset, self.period)
+        expected = ((30.0 - 18.0) + 6 * 2.0) / 7
+        self.assertAlmostEqual(comparison.temperature.bias, round(expected, 1))
+
+    def test_availability_reports_coverage_and_gaps(self):
+        availability = _build_availability(self._dataset(), self.period, compared_hours=7)
+
+        self.assertEqual(availability.coverage, "partial")
+        self.assertEqual(availability.observed_hours, 7)
+        self.assertEqual(availability.period_hours, 24)
+        self.assertEqual(availability.coverage_pct, 29.2)
+        self.assertEqual(
+            [gap.hours for gap in availability.gaps],
+            [11, 6],
+        )
+
+    def test_no_aemet_means_no_comparison(self):
+        dataset = _Dataset(data_source="mock", station=self._dataset().station, aemet={})
+
+        comparison = _build_comparison(dataset, self.period)
+        availability = _build_availability(dataset, self.period, compared_hours=0)
+
+        self.assertEqual(comparison.temperature.samples, 0)
+        self.assertIsNone(comparison.temperature.bias)
+        self.assertIsNone(comparison.humidity.saturated_pct)
+        self.assertEqual(availability.coverage, "none")
+        self.assertEqual(len(availability.gaps), 1)
+
+
+if __name__ == "__main__":
+    unittest.main()

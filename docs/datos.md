@@ -124,19 +124,42 @@ El mapa está en [`backend/app/core/weather_map.py`](../backend/app/core/weather
 
 | Elemento | Entidad | Contenido |
 | -------- | ------- | --------- |
-| Estación | `weather.meteo` | `state` = temperatura exterior; atributos `Humidity`, `Pressure` (nivel del mar), `PM1`, `PM2.5`, `PM10` y `Battery`. |
-| Interior | `sensor.ambiente` | Temperatura, humedad, presión, CO₂ y TVOC. |
-| AEMET | `sensor.aemet_temperature`, `_humidity`, `_pressure`, `_precipitation`, `_visibility`, `_snow` | Referencia externa de Ciudad Real. |
-| Energía | `sensor.daily_gas`, `sensor.daily_gas_cost`, `sensor.cuadro_general` | Cruce con temperatura y grados-día. |
+| Estación | `weather.meteo` | `state` = temperatura exterior; atributos `Humidity`, `Pressure` (nivel del mar), `PM1`, `PM2.5`, `PM10` y `Battery`. Unas 96 lecturas al día. |
+| AEMET | `sensor.aemet_temperature`, `_humidity`, `_pressure`, `_precipitation` | Observatorio de Ciudad Real. Una observación por hora; la hora real está en el atributo `last_update`. |
 
 - La estación no publica viento, lluvia ni radiación solar.
 - `weather.meteo_2` es una entidad duplicada no disponible y `sensor.temperatura_meteo` duplica la temperatura; no se usan.
 - La presión de la estación se publica a nivel del mar; para compararla con AEMET se reduce a 626,17 m.
 - Los valores de PM no declaran unidad: se muestran como índice relativo.
 - Se descartan reinicios con `state=0` y sin atributos útiles.
-- La ventana es de 7, 30 o 90 días; 7 días usa serie horaria y 30/90 usan serie diaria.
+
+Limitaciones medidas en el recorder (noviembre de 2026):
+
+- **AEMET tiene huecos:** no hay datos entre el 4 de agosto y el 12 de octubre de 2026, ni desde el 29 de octubre de 2026, y también faltan meses de 2025. La web lo indica y no los rellena; se recuperará al reparar la integración en Home Assistant.
+- **La humedad de la estación se satura:** marca 100 % en gran parte de las horas húmedas (80 % de las horas de enero y febrero de 2026).
+- **La temperatura diurna se desvía:** en octubre de 2026 la estación marca unos 5 °C más que AEMET en las horas centrales y casi lo mismo de noche, lo que apunta a sol directo sobre el sensor.
 
 ## Mantenimiento
+
+### Páginas de batería
+
+Los sensores están en [`backend/app/core/battery_map.py`](../backend/app/core/battery_map.py) y se leen de `states.state`:
+
+| Grupo | Entidades | Unidad | Rango válido |
+|---|---|---|---|
+| Shellys | `sensor.bateria_shelly1` a `sensor.bateria_shelly18` | % | 0–100 |
+| Válvulas | `sensor.bateria_valvula_f1_1` y `sensor.bateria_valvula_ld1` a `ld4` | % | 0–100 |
+| Aulas | `sensor.sensor_bateria_a11`, `a12`, `a21` y `a22` | mV | 2000–4000 |
+
+- **Lecturas descartadas:** `unknown`, `unavailable`, cadenas vacías y valores fuera de rango. Las aulas han registrado 0 y más de 65 000 mV.
+- **Lectura actual:** la última fila es válida y tiene como máximo 7 días. Si no, se muestra el último valor válido con su fecha y el nivel queda como «Sin lectura actual».
+- **Válvulas (9 nov 2026):** ninguna tiene lectura actual. F1.1, LD2, LD3 y LD4 están en `unknown` desde el 30 oct 2026, y LD1 no registra nada desde abril de 2024. El atributo de unidad de LD2 indica `ºC`, pero sus valores son porcentajes.
+- **Porcentaje de las aulas:** es una estimación con `MV_PERCENT_CURVE`, que llega al 100 % a partir de 3600 mV, así que distingue poco por encima de ese voltaje. El dato fiable son los mV.
+- **Lecturas a 0 %:** algunos Shellys (sobre todo el 9) y válvulas tienen ceros aislados. Están dentro del rango y no se filtran porque no se pueden distinguir de una pila agotada; pueden aparecer como caídas en el histórico por hora.
+- **Huecos:** más de 7 días sin lecturas válidas se dibujan como un corte de la línea.
+
+### Panel anterior
+
 
 El mapa está en [`backend/app/core/maintenance_map.py`](../backend/app/core/maintenance_map.py). Solo incluye dispositivos con entidades confirmadas en el recorder: 18 Shelly H&T, los sensores CO₂ A11–A22, tres sensores de presencia, seis Fleximodo, el contador de gas, la estación meteorológica, cinco válvulas TRV y los contadores/controladores cableados principales.
 
@@ -159,11 +182,19 @@ El mapa está en [`backend/app/core/maintenance_map.py`](../backend/app/core/mai
 
 ## Coste
 
+El coste de Electricidad se calcula con la tarifa real deducida de
+`sensor.cuadro_general_cost` (contador monetario acumulado en `states`):
+
 ```text
-coste = kWh × 0,20 €/kWh
+tarifa = mediana(coste_horario / kWh_horario)
+coste  = kWh × tarifa
 ```
 
-Iluminación usa el mismo precio para el coste de luminarias. El CO₂ de Iluminación se calcula con `CO2_KG_PER_KWH` y es un indicador derivado.
+La mediana descarta los picos corruptos del contador. Si no hay lecturas
+suficientes se usa `ENERGY_PRICE_EUR_PER_KWH` como respaldo.
+
+Iluminación usa `ENERGY_PRICE_EUR_PER_KWH` para el coste de luminarias. El CO₂
+de Iluminación se calcula con `CO2_KG_PER_KWH` y es un indicador derivado.
 
 ## Límites conocidos
 

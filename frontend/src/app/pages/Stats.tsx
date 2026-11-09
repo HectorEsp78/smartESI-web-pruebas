@@ -3,19 +3,19 @@ import { useLocation, useNavigate } from 'react-router';
 import { Header } from '../components/Header';
 import { RangeProvider } from '../context/RangeContext';
 import { SectionHeading } from '../components/ui/SectionHeading';
+import { BatteryDashboard } from '../components/stats/battery/BatteryDashboard';
 import { ElectricityDashboard } from '../components/stats/electricity/ElectricityDashboard';
 import { EnvironmentDashboard } from '../components/stats/environment/EnvironmentDashboard';
 import { LightingConsumptionChart } from '../components/stats/lighting/LightingConsumptionChart';
 import { LightingBySpaceChart } from '../components/stats/lighting/LightingBySpaceChart';
 import { LightingWasteChart } from '../components/stats/lighting/LightingWasteChart';
-import { MaintenanceDashboard } from '../components/stats/maintenance/MaintenanceDashboard';
 import { WeatherDashboard } from '../components/stats/weather/WeatherDashboard';
 import type { DashboardTabId } from '../lib/sections';
 import { parseDashboardUrlState } from '../lib/urlState';
 
 const SECTION_CLASS = 'mx-auto w-full max-w-7xl px-4 pt-8 sm:px-6 lg:px-8';
 
-const TAB_HEADING: Record<DashboardTabId, { title: string; subtitle: string }> = {
+const TAB_HEADING: Record<DashboardTabId, { title: string; subtitle?: string }> = {
   electricidad: {
     title: 'ELECTRICIDAD',
     subtitle:
@@ -28,17 +28,15 @@ const TAB_HEADING: Record<DashboardTabId, { title: string; subtitle: string }> =
   infraestructura: {
     title: 'INFRAESTRUCTURA',
     subtitle:
-      'Temperatura, humedad, CO₂ y presencia por estancia, con cruces para ahorro energético y decisiones.',
+      'Temperatura, humedad y presencia en las aulas A11, A12, A21 y A22.',
   },
   mantenimiento: {
     title: 'MANTENIMIENTO',
-    subtitle:
-      'Batería, transmisión y cortes por dispositivo para priorizar revisiones, cambios de batería y sustituciones.',
+    subtitle: 'Nivel de batería de los sensores y su histórico.',
   },
   'medio-ambiente': {
     title: 'MEDIO AMBIENTE',
-    subtitle:
-      'Estación meteorológica del centro: temperatura, humedad, presión, partículas y cruces con el interior, AEMET y la energía.',
+    subtitle: 'Estación meteorológica del centro frente al observatorio de AEMET en Ciudad Real.',
   },
 };
 
@@ -51,12 +49,12 @@ function TabContent({ tab }: { tab: DashboardTabId }) {
     return <EnvironmentDashboard />;
   }
 
-  if (tab === 'mantenimiento') {
-    return <MaintenanceDashboard />;
-  }
-
   if (tab === 'medio-ambiente') {
     return <WeatherDashboard />;
+  }
+
+  if (tab === 'mantenimiento') {
+    return <BatteryDashboard />;
   }
 
   return (
@@ -72,6 +70,9 @@ function tabFromLocation(pathname: string, search: string): DashboardTabId {
   if (pathname === '/infraestructura' || pathname.startsWith('/infraestructura/')) {
     return 'infraestructura';
   }
+  if (pathname === '/mantenimiento' || pathname.startsWith('/mantenimiento/')) {
+    return 'mantenimiento';
+  }
   return parseDashboardUrlState(search).tab;
 }
 
@@ -86,11 +87,14 @@ export function Stats() {
       // Read the live search string: the range selector updates the URL with
       // ``history.replaceState``, which React Router's location may not have
       // observed yet.
-      const currentSearch =
-        typeof window === 'undefined' ? location.search : window.location.search;
+      const params = new URLSearchParams(window.location.search);
 
       if (tab === 'infraestructura') {
-        const params = new URLSearchParams(currentSearch);
+        // Each tab has its own period: keep it only within Infrastructure.
+        if (!location.pathname.startsWith('/infraestructura')) {
+          params.delete('start');
+          params.delete('end');
+        }
         params.delete('tab');
         const search = params.toString();
         navigate(
@@ -100,13 +104,23 @@ export function Stats() {
         return;
       }
 
-      const params = new URLSearchParams(currentSearch);
       params.delete('start');
       params.delete('end');
+
+      if (tab === 'mantenimiento') {
+        params.delete('tab');
+        const search = params.toString();
+        navigate(
+          { pathname: '/mantenimiento', search: search ? `?${search}` : '' },
+          { replace: true },
+        );
+        return;
+      }
+
       params.set('tab', tab);
       navigate({ pathname: '/', search: `?${params.toString()}` }, { replace: true });
     },
-    [location.search, navigate],
+    [location.pathname, navigate],
   );
 
   return (

@@ -17,10 +17,11 @@ import statistics
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
-from typing import Literal
+from itertools import pairwise
+from typing import TYPE_CHECKING, Literal
 
 from app.core.cache import TTLCache
-from app.core.clock import ensure_utc, local_now, local_tz
+from app.core.clock import ensure_utc, local_now, local_tz, validate_query_dates
 from app.core.config import settings
 from app.core.environment_map import (
     AMBIENT_TEMPERATURE_ENTITY,
@@ -37,9 +38,11 @@ from app.core.environment_map import (
     TEMPERATURE_MAX_C,
     TEMPERATURE_MIN_C,
     EnvironmentQuality,
+    EnvironmentRoomConfig,
     building_label,
     co2_status,
     humidity_status,
+    parse_presence,
     temperature_status,
     worst_status,
 )
@@ -58,6 +61,9 @@ from app.schemas.environment import (
 )
 from app.services import mock_data
 from app.services.lighting_context import Bucket
+
+if TYPE_CHECKING:
+    from app.db.environment_data import EnvironmentDatabaseData
 
 _cache = TTLCache(ttl_seconds=settings.STATS_CACHE_TTL_SECONDS, max_entries=32)
 _ONE_DAY = timedelta(days=1)
@@ -157,10 +163,11 @@ def _current_from_raw(
     if max_age is not None and ensure_utc(local_now()) - updated > max_age:
         return None, None
     try:
-        value = float(state)  # type: ignore[arg-type]
+        value = float(state)
     except (TypeError, ValueError):
         return None, None
-    if value < minimum or value > maximum:
+    # Written this way round so ``nan`` is rejected too.
+    if not minimum <= value <= maximum:
         return None, None
     return value, updated
 
@@ -177,17 +184,11 @@ def _current_presence_from_raw(
     if row is None:
         return None, None
     state, _attributes, updated_at = row
-    if state is None:
-        return None, None
     updated = ensure_utc(updated_at)
     if max_age is not None and ensure_utc(local_now()) - updated > max_age:
         return None, None
-    value = state.strip().lower()
-    if value in {"sí", "si", "1", "on", "yes", "true"}:
-        return True, updated
-    if value in {"no", "0", "off", "false"}:
-        return False, updated
-    return None, None
+    value = parse_presence(state)
+    return (value, updated) if value is not None else (None, None)
 
 
 def _filter_series(
@@ -198,7 +199,9 @@ def _filter_series(
     return {key: value for key, value in series.items() if minimum <= value <= maximum}
 
 
-def _database_room_data(room, database) -> _RoomData:
+def _database_room_data(
+    room: EnvironmentRoomConfig, database: EnvironmentDatabaseData
+) -> _RoomData:
     temperature = (
         _filter_series(
             database.statistics.get(room.temperature_entity, {}),
@@ -306,7 +309,9 @@ def _database_room_data(room, database) -> _RoomData:
     )
 
 
-def _mock_room_data(room, start: datetime, end: datetime) -> _RoomData:
+def _mock_room_data(
+    room: EnvironmentRoomConfig, start: datetime, end: datetime
+) -> _RoomData:
     temperature: dict[datetime, float] = {}
     humidity: dict[datetime, float] = {}
     co2: dict[datetime, float] = {}
@@ -356,11 +361,15 @@ def _mock_room_data(room, start: datetime, end: datetime) -> _RoomData:
 
 
 def _hourly_increments(rows: list[tuple[datetime, float]]) -> dict[datetime, float]:
-    """Turn cumulative meter sums into non-negative local-hour increments."""
-    ordered = sorted(rows)
+    """Turn cumulative meter sums into non-negative local-hour increments.
+
+    A drop in the long-term ``sum`` is a recorder correction, not consumption:
+    it is ignored, because taking the new total as the increment would add the
+    whole history of the meter to a single hour.
+    """
     increments: dict[datetime, float] = defaultdict(float)
-    for (previous_at, previous), (current_at, current) in zip(ordered, ordered[1:]):
-        delta = current - previous if current >= previous else current
+    for (_previous_at, previous), (current_at, current) in pairwise(sorted(rows)):
+        delta = current - previous
         if delta <= 0:
             continue
         key = current_at.astimezone(local_tz()).replace(
@@ -437,6 +446,7 @@ def resolve_period(
     end: date | None = None,
 ) -> _Period:
     """Validate the custom date inputs and return local, inclusive bounds."""
+    validate_query_dates(*(value for value in (start, end) if value is not None))
     today = local_now().date()
     end_date = end or today
     start_date = start or (end_date - timedelta(days=DEFAULT_ENVIRONMENT_DAYS - 1))
@@ -529,7 +539,9 @@ def _percent(count: int, total: int) -> float | None:
     return count / total * 100.0 if total else None
 
 
-def _build_summary(room, data: _RoomData, period: _Period) -> EnvironmentRoomSummary:
+def _build_summary(
+    room: EnvironmentRoomConfig, data: _RoomData, period: _Period
+) -> EnvironmentRoomSummary:
     temperatures = _values_in(data.temperature, period.start, period.end)
     humidities = _values_in(data.humidity, period.start, period.end)
     co2_values = _values_in(data.co2, period.start, period.end)
@@ -815,7 +827,8 @@ def _build_thermal_recovery(data: _RoomData, period: _Period) -> EnvironmentTher
             continue
         if data.presence[key] < 0.5 or data.presence[next_key] > 0.05:
             continue
-        baseline = _median(empty_by_date.get(next_key.date(), [])) or overall_baseline
+        day_baseline = _median(empty_by_date.get(next_key.date(), []))
+        baseline = day_baseline if day_baseline is not None else overall_baseline
         start_temperature = data.temperature[next_key]
         if abs(start_temperature - baseline) < 0.5:
             continue

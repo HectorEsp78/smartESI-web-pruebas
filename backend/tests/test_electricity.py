@@ -193,7 +193,7 @@ class ElectricityEndpointsTest(unittest.TestCase):
         self.assertTrue(body["equal_length"])
         self.assertEqual(body["scope"], "ModuloA")
         self.assertEqual(body["periods"][0]["delta_pct"], 0)
-        for period, year in zip(body["periods"], (2026, 2025, 2024, 2023)):
+        for period, year in zip(body["periods"], (2026, 2025, 2024, 2023), strict=True):
             self.assertEqual(period["start"], f"{year}-10-01")
             self.assertEqual(period["end"], f"{year}-10-07")
             self.assertGreater(period["stats"]["total"], 0)

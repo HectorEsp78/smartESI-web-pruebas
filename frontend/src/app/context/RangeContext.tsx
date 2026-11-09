@@ -1,7 +1,6 @@
 import { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { updateDashboardUrl, parseDashboardUrlState } from '../lib/urlState';
-import { DEFAULT_DASHBOARD_RANGE } from '../types/range';
 import type { DashboardRange } from '../types/range';
 
 interface RangeContextValue {
@@ -12,7 +11,6 @@ interface RangeContextValue {
 const RangeContext = createContext<RangeContextValue | null>(null);
 
 function initialRange(): DashboardRange {
-  if (typeof window === 'undefined') return DEFAULT_DASHBOARD_RANGE;
   return parseDashboardUrlState(window.location.search).range;
 }
 

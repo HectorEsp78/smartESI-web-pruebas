@@ -21,7 +21,7 @@ export const ELECTRICITY_TOOLTIP_PATTERN: Record<ElectricityGranularity, string>
   year: 'yyyy',
 };
 
-export function localIsoDate(date: Date): string {
+function localIsoDate(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
@@ -110,6 +110,10 @@ export function formatDateInputLabel(value: string): string {
   const date = parseISO(value);
   if (Number.isNaN(date.getTime())) return value;
   return format(date, 'd MMM yyyy', { locale: es });
+}
+
+export function formatDayCount(days: number): string {
+  return days === 1 ? '1 día' : `${days} días`;
 }
 
 export function formatElectricityValue(value: number, unit: string): string {

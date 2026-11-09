@@ -1,8 +1,9 @@
 import { StatCard } from '../../ui/StatCard';
 import { formatNumber } from '../../../lib/format';
 import {
-  formatHours,
   formatHumidity,
+  formatMm,
+  formatPercent,
   formatPmIndex,
   formatPressure,
   formatTemperature,
@@ -14,25 +15,8 @@ interface WeatherSummaryProps {
 }
 
 export function WeatherSummary({ summary }: WeatherSummaryProps) {
-  const coverageTone =
-    summary.coverage_pct === null
-      ? 'neutral'
-      : summary.coverage_pct < 80
-        ? 'warning'
-        : 'success';
-
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard
-        label="Cobertura de la estación"
-        value={
-          summary.coverage_pct === null
-            ? '—'
-            : `${formatNumber(summary.coverage_pct, 1)} %`
-        }
-        hint={`${summary.samples} muestras · ${formatHours(summary.outage_hours)} sin datos`}
-        tone={coverageTone}
-      />
       <StatCard
         label="Temperatura media"
         value={formatTemperature(summary.temperature_avg_c)}
@@ -40,40 +24,34 @@ export function WeatherSummary({ summary }: WeatherSummaryProps) {
         tone="primary"
       />
       <StatCard
-        label="Amplitud diaria media"
-        value={formatTemperature(summary.temperature_amplitude_avg_c)}
-        hint={`${summary.tropical_nights} noches tropicales (≥ 20 °C)`}
-        tone="neutral"
-      />
-      <StatCard
         label="Humedad media"
         value={formatHumidity(summary.humidity_avg_pct)}
         hint={`Mín. ${formatHumidity(summary.humidity_min_pct)} · Máx. ${formatHumidity(summary.humidity_max_pct)}`}
-        tone="primary"
       />
       <StatCard
         label="Presión media"
         value={formatPressure(summary.pressure_avg_hpa)}
-        hint={`Rango ${formatPressure(summary.pressure_range_hpa)}`}
-        tone="neutral"
+        hint="A nivel del mar"
       />
       <StatCard
-        label="Horas de calor / frío"
-        value={`${formatHours(summary.hot_hours)} / ${formatHours(summary.cold_hours)}`}
-        hint="≥ 30 °C / ≤ 10 °C"
-        tone={summary.hot_hours !== null && summary.hot_hours > 0 ? 'warning' : 'neutral'}
+        label="Lecturas de la estación"
+        value={formatNumber(summary.samples, 0)}
+        hint={`Cobertura ${formatPercent(summary.coverage_pct)} del periodo`}
       />
       <StatCard
-        label="Grados-día"
-        value={`${summary.heating_degree_days === null ? '—' : formatNumber(summary.heating_degree_days, 1)} HDD`}
-        hint={`${summary.cooling_degree_days === null ? '—' : formatNumber(summary.cooling_degree_days, 1)} CDD · bases 18 / 22 °C`}
-        tone="neutral"
-      />
-      <StatCard
-        label="PM2.5 (índice)"
+        label="PM2.5 medio (índice)"
         value={formatPmIndex(summary.pm25_avg)}
-        hint={`Máx. ${formatPmIndex(summary.pm25_max)} · índice relativo`}
-        tone="accent"
+        hint={`PM10 ${formatPmIndex(summary.pm10_avg)} · Sin unidad publicada`}
+      />
+      <StatCard
+        label="Batería mínima"
+        value={formatPercent(summary.battery_min_pct)}
+        hint="De la estación en el periodo"
+      />
+      <StatCard
+        label="Lluvia en Ciudad Real"
+        value={formatMm(summary.aemet_precipitation_mm)}
+        hint={`${summary.aemet_rainy_hours} horas con lluvia, según AEMET`}
       />
     </div>
   );

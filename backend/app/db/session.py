@@ -12,14 +12,13 @@ SQLAlchemy / a database driver installed.
 from __future__ import annotations
 
 import ssl
-from collections.abc import AsyncGenerator
 
+from sqlalchemy.engine import URL
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from sqlalchemy.engine import URL
 
 from app.core.config import settings
 
@@ -73,11 +72,3 @@ engine = create_async_engine(
     connect_args=_connect_args,
 )
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
-
-
-async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        try:
-            yield session
-        finally:
-            await session.close()

@@ -4,9 +4,9 @@ Prototipo local de la capa de estadísticas de Smart ESI. La web tiene **cinco p
 
 - **Electricidad** — consumo o coste por edificio y por los cuadros de Fermín Caballero, comparativa de varios periodos y base de consumo del centro cerrado. Usa fechas propias (inicio y fin inclusivos) y calcula la agrupación temporal automáticamente.
 - **Iluminación** — reparto entre luminarias y otras cargas, ranking de espacios y despilfarro de luz cuando el edificio está vacío.
-- **Infraestructura** — índice compacto y página por estancia con temperatura, humedad, CO₂ y presencia; fechas propias (7 días por defecto, máximo un año), recuperación térmica, mapa horario y comparación con la media. Incluye gas del edificio y un ambiente de referencia.
-- **Medio Ambiente** — estación meteorológica del centro con temperatura, humedad, presión, partículas y batería; cruces con el sensor interior, AEMET y el consumo energético.
-- **Mantenimiento** — batería, transmisión y cortes por dispositivo para priorizar revisiones, cambios de batería y sustituciones.
+- **Infraestructura** — índice compacto y página por estancia con temperatura, humedad, CO₂ y presencia; fechas propias (hoy por defecto, máximo un año), recuperación térmica, mapa horario y comparación con la media. Incluye gas del edificio y un ambiente de referencia.
+- **Medio Ambiente** — estación meteorológica del centro frente al observatorio de AEMET en Ciudad Real: temperatura, humedad y presión, además de lluvia, partículas y batería; fechas propias (últimos 30 días por defecto, máximo un año).
+- **Mantenimiento** — nivel de batería de Shellys, válvulas y aulas, cada grupo en su página, con el histórico de cada sensor.
 
 El objetivo es convertir los datos del *recorder* de Home Assistant en gráficas sencillas para detectar gasto y decidir actuaciones.
 
@@ -17,8 +17,8 @@ El objetivo es convertir los datos del *recorder* de Home Assistant en gráficas
 | Electricidad | Real (`statistics`) si `DATA_SOURCE=database`; sintético en `mock` | No aplica | 0,20 €/kWh |
 | Iluminación | Sintético determinista | Real si hay contadores; sintético si no | 0,20 €/kWh |
 | Infraestructura | No aplica | Real (sensores de movimiento/presencia) | Gas real del edificio como contexto |
-| Medio Ambiente | Estación meteorológica real | No aplica | Gas/electricidad del edificio como contexto |
-| Mantenimiento | No aplica | No aplica | No aplica (batería y transmisión) |
+| Medio Ambiente | Estación meteorológica y AEMET reales | No aplica | No aplica |
+| Mantenimiento | No aplica | No aplica | No aplica (batería) |
 
 - **Solo lectura**: el backend únicamente ejecuta `SELECT` contra la base de datos del recorder.
 - **Fermín Caballero** se obtiene como `Cuadro General − Módulo A − Módulo B`.
@@ -52,10 +52,17 @@ cd backend
 
 ```bash
 cd backend && .venv/bin/python -m unittest discover -s tests -t . -v
-cd frontend && npm run typecheck && npm run test:run && npm run build
+cd frontend && npm run typecheck && npm run lint && npm run test:run && npm run build
 ```
 
 Los tests del backend fuerzan `DATA_SOURCE=mock` y no tocan la base de datos real.
+
+Para el análisis estático del backend, instala el extra `dev`:
+
+```bash
+cd backend && .venv/bin/python -m pip install -e ".[dev]"
+.venv/bin/ruff check app tests && .venv/bin/mypy
+```
 
 ## Puertos
 

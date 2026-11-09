@@ -30,6 +30,7 @@ frontend/src/app/
 │   ├── lighting.ts         Consultas de Iluminación
 │   ├── environment.ts      Consultas de Infraestructura
 │   ├── maintenance.ts      Consultas de Mantenimiento
+│   ├── battery.ts          Consultas de las páginas de batería
 │   ├── weather.ts          Consultas de Medio Ambiente
 │   ├── meta.ts             Edificios
 │   └── http.ts             fetch + errores
@@ -38,8 +39,9 @@ frontend/src/app/
 │   ├── stats/electricity/  Dashboard, filtros, resumen y gráficas
 │   ├── stats/environment/  Índice, página por estancia y cruces ambientales
 │   ├── stats/lighting/     Consumo, ranking y despilfarro
-│   ├── stats/maintenance/  Resumen, matriz, cortes, tabla y detalle por dispositivo
-│   ├── stats/weather/      Estación, resumen, gráficas, cruces y notas
+│   ├── stats/battery/      Páginas de batería: navegación, tarjetas, ventana e histórico
+│   ├── stats/maintenance/  Panel anterior, no montado: resumen, matriz, cortes y detalle
+│   ├── stats/weather/      Estación frente a AEMET: comparación, gráficas, resumen y notas
 │   └── ui/                 ChartCard, StatCard, ExportCsvButton, SelectField, RangeSelector
 ├── context/
 │   └── RangeContext.tsx    Periodo global de Iluminación
@@ -49,14 +51,16 @@ frontend/src/app/
 │   ├── useEnvironment.ts
 │   ├── useEnvironmentPeriod.ts
 │   ├── useMaintenance.ts
+│   ├── useBattery.ts
 │   ├── useMaintenanceDays.ts
 │   ├── useWeather.ts
-│   ├── useWeatherDays.ts
+│   ├── useDatePeriod.ts
 │   └── useBuildings.ts
 ├── lib/
 │   ├── electricity.ts      Fechas, periodos y granularidad automática
 │   ├── environment.ts      Colores, periodo, formato y mapa horario
 │   ├── maintenance.ts      Filtros, formato, matriz y mapa de transmisión
+│   ├── battery.ts          Páginas, periodos, formato y eje del histórico de batería
 │   ├── weather.ts          Periodo, formato y avisos de la estación
 │   ├── format.ts           Números, kWh, € y porcentajes
 │   ├── chartTheme.ts       Paletas y estilos de ejes
@@ -76,9 +80,9 @@ frontend/src/app/
 - `lib/urlState.ts` sincroniza `?tab=` y `?range=`. Los valores desconocidos vuelven a los valores por defecto.
 - El selector global de periodo se muestra solo en **Iluminación**.
 - Electricidad usa sus propias fechas y su comparativa.
-- Infraestructura usa `?start=&end=` (7 días por defecto, máximo un año) y mantiene las fechas al navegar entre el índice y cada estancia.
-- Mantenimiento usa `?tab=mantenimiento&days=7|30|90`; no necesita una ruta nueva.
-- Medio Ambiente usa `?tab=medio-ambiente&days=7|30|90`; tampoco necesita una ruta nueva.
+- Infraestructura usa `?start=&end=` (día actual por defecto, máximo un año) y mantiene las fechas al navegar entre el índice y cada estancia.
+- Mantenimiento usa `/mantenimiento/shellys`, `/mantenimiento/valvulas` y `/mantenimiento/aulas`. `/mantenimiento` y `?tab=mantenimiento` redirigen a Shellys.
+- Medio Ambiente usa `?tab=medio-ambiente&start=&end=`; tampoco necesita una ruta nueva.
 
 ## Electricidad
 
@@ -116,39 +120,42 @@ El periodo y el edificio son globales para las tres gráficas.
 
 Rutas:
 
-- `/infraestructura`: índice compacto de estancias, medias del periodo y enlaces a cada estancia.
-- `/infraestructura/{room_id}`: página de una estancia con sus gráficas y cruces.
+- `/infraestructura`: tarjetas de las cuatro aulas monitorizadas.
+- `/infraestructura/{room_id}`: gráficas de temperatura, humedad y presencia.
 
 | Componente | Responsabilidad |
 | ---------- | --------------- |
 | `EnvironmentDashboard` | Decide entre índice y detalle según la ruta. |
-| `EnvironmentIndex` | Filtro de fechas, resumen y lista compacta de estancias. |
-| `EnvironmentFilters` | Fechas personalizadas, validación y máximo de un año. |
-| `EnvironmentSummary` | Tira compacta con temperatura media, CO₂ medio, ocupación media y estancias ocupadas ahora. |
-| `EnvironmentRoomList` | Lista compacta con ambiente actual, uso y estado por estancia. |
-| `EnvironmentRoomPage` | Página de una estancia: cabecera, KPIs, gráficas principales y análisis avanzado plegado. |
-| `EnvironmentRoomHeader` | Valores actuales en una fila compacta y aviso de dato obsoleto. |
-| `EnvironmentRoomStats` | Cuatro KPIs del periodo: temperatura, humedad, CO₂ y ocupación. |
-| `EnvironmentRoomTemperatureChart` / `EnvironmentRoomHumidityChart` | Temperatura con ambiente de referencia y humedad con bandas de confort (esta última en análisis avanzado). |
-| `EnvironmentRoomCo2Chart` | CO₂ frente a ocupación con umbrales de 800/1.000 ppm. |
-| `EnvironmentHeatmap` | Mapa horario 7×24 de ocupación o CO₂. |
-| `EnvironmentCo2OccupancyCard` | CO₂ con/sin presencia, incremento, correlación y dispersión. |
-| `EnvironmentThermalRecoveryCard` | Vuelta a la temperatura de reposo tras desocupar. |
-| `EnvironmentBenchmarkCard` | Comparación con la media del resto de estancias. |
-| `EnvironmentGasContextChart` | Temperatura de la estancia, ambiente de referencia y coste de gas del edificio. |
+| `EnvironmentIndex` | Selector de periodo y rejilla de tarjetas de aula. |
+| `EnvironmentRangeSelector` | Botones Día / Semana / Mes; escribe `start` y `end` en la URL. |
+| `EnvironmentRoomCard` | Tarjeta con imagen, código, nombre y valores actuales de temperatura, humedad y presencia. |
+| `EnvironmentRoomPage` | Cabecera con valores actuales y las tres gráficas del periodo. |
+| `EnvironmentRoomTemperatureChart` | Temperatura con banda de confort 18–24 °C. |
+| `EnvironmentRoomHumidityChart` | Humedad con banda de confort 30–60 %. |
+| `EnvironmentRoomPresenceChart` | Presencia sí/no por intervalo (`sensor.movimiento_aXX`). |
 
 Reglas de interfaz:
 
-- Solo se muestran estancias con sensores confirmados; no se inventan salas.
-- F0.2, ALU y Anita Borg solo tienen presencia: muestran ocupación y horas; el mapa horario queda en análisis avanzado, sin rellenar temperatura, humedad o CO₂.
-- El detalle evita saturar la pantalla: solo temperatura y CO₂ están visibles; humedad, mapas, cruces, comparativa y gas se pliegan en “Análisis avanzado”.
-- Los valores actuales pueden ser el último dato válido si el sensor se reinició.
-- Si el último dato ambiental tiene más de 6 horas, se marca en ámbar como “sin actualizar”.
-- La temperatura/humedad de referencia es `sensor.ambiente`, sin sala confirmada. El gas es del edificio y puede incluir usos distintos de la calefacción.
-- El CO₂ se muestra en ppm y la ocupación como porcentaje del intervalo.
-- Los umbrales son orientativos y se explican en las notas de la pestaña.
+- Solo se muestran A11, A12, A21 y A22; no se inventan salas.
+- Las tarjetas siguen la estética del proyecto Smart ESI: imagen del aula, categoría, código y nombre.
+- El periodo por defecto es el día actual; también se puede ver la última semana o el último mes.
+- La temperatura y la humedad proceden de `statistics.mean`; la presencia, de las transiciones de `states`.
+- Si una hora no tiene dato ambiental, la serie deja un hueco en lugar de inventar un valor.
+- La presencia se representa como escalón 0/1 con eje «Sí/No»: indica si hubo movimiento en cada intervalo.
 
 ## Mantenimiento
+
+Cada grupo tiene su página con tres indicadores y una tarjeta por sensor. El periodo del histórico es estado local de la ventana y no se guarda en la URL.
+
+| Componente | Función |
+|---|---|
+| `BatteryDashboard` | Navegación entre grupos, resumen, avisos y tarjetas. |
+| `BatterySensorCard` | Nivel actual, estado y fecha de lectura; al pulsarla abre el histórico. |
+| `BatteryHistoryDialog` | Ventana (`<dialog>`) con fechas y periodos rápidos. Se cierra con Escape, con «Cerrar» o pulsando fuera. |
+| `BatteryHistoryChart` | Línea del histórico con los umbrales de batería. |
+
+### Panel anterior (no montado en la interfaz)
+
 
 Se abre con `?tab=mantenimiento&days=7|30|90` (30 por defecto). Es una vista de solo lectura: no registra intervenciones.
 
@@ -176,33 +183,29 @@ Reglas de interfaz:
 
 ## Medio Ambiente
 
-Se abre con `?tab=medio-ambiente&days=7|30|90` (30 por defecto). Es una vista de solo lectura.
+Se abre con `?tab=medio-ambiente&start=YYYY-MM-DD&end=YYYY-MM-DD` (últimos 30 días por defecto). Es una vista de solo lectura.
 
 | Componente | Responsabilidad |
 | ---------- | --------------- |
-| `WeatherDashboard` | Carga el resumen y compone filtros, estado actual, tarjetas, gráficas, cruces, tabla diaria y notas. |
-| `WeatherFilters` | Selector de periodo de 7, 30 o 90 días. |
-| `WeatherCurrent` | Última lectura: temperatura, humedad, presión, PM, batería, edad del dato y tendencia. |
-| `WeatherSummary` | Cobertura, temperatura, amplitud, humedad, presión, horas de calor/frío, grados-día y PM. |
-| `WeatherTemperatureChart` / `WeatherHumidityChart` | Estación, interior de referencia y AEMET. |
-| `WeatherPressureChart` | Presión de la estación reducida al nivel del mar. |
+| `WeatherDashboard` | Carga los datos y compone filtros, valores actuales, aviso, comparación, gráficas, resumen y notas. |
+| `WeatherFilters` | Fechas Desde/Hasta y atajos de 7, 30 y 90 días. |
+| `WeatherCurrent` | Última lectura de la estación y última observación guardada de AEMET. |
+| `WeatherAemetNotice` | Avisa si el periodo no tiene datos de AEMET, los tiene en parte o AEMET ha dejado de actualizarse. |
+| `WeatherComparison` | Diferencia media, error absoluto y correlación de temperatura, humedad y presión. |
+| `WeatherTemperatureChart` / `WeatherHumidityChart` / `WeatherPressureChart` | Estación y AEMET en la misma gráfica. |
+| `WeatherHourlyBiasChart` | Diferencia de temperatura por hora del día. |
+| `WeatherRainChart` | Lluvia de AEMET. |
 | `WeatherPmChart` | PM1, PM2.5 y PM10 como índice relativo. |
-| `WeatherIndoorCross` | Salto térmico/húmedo y correlaciones con `sensor.ambiente`. |
-| `WeatherAemetCross` | Sesgo, MAE, correlación y sesgo por hora frente a AEMET. |
-| `WeatherEnergyCross` | Gas/electricidad frente a temperatura y grados-día. |
-| `WeatherPmCross` | Ratios y correlaciones de partículas. |
-| `WeatherDailyTable` | Resumen diario con cobertura, extremos, PM y energía. |
+| `WeatherBatteryChart` | Batería de la estación. |
+| `WeatherSummary` | Estadísticas de la estación en el periodo y lluvia total. |
 | `WeatherNotes` | Criterios y limitaciones de los datos. |
 
 Reglas de interfaz:
 
-- La pantalla principal no se satura: la tabla diaria queda plegada en “ver resumen diario”.
-- La estación no publica viento ni lluvia; no se inventan esas gráficas.
+- Los huecos de AEMET se avisan y se dibujan como huecos: nunca se rellenan.
+- Sin datos de AEMET en el periodo se muestra solo la estación y no aparece la comparación.
 - PM1/PM2.5/PM10 se muestran como **índice relativo**, nunca como µg/m³ ni frente a umbrales sanitarios.
-- AEMET se etiqueta como referencia externa de Ciudad Real y se marca si está desactualizada.
-- La presión se muestra a nivel del mar; el cruce con AEMET usa la presión reducida a la altitud del observatorio.
-- Los cruces energéticos avisan de los días excluidos por saltos anómalos de los contadores.
-- Las correlaciones solo se muestran cuando hay suficientes horas comunes.
+- La presión se compara a la altitud del observatorio de AEMET.
 
 ## Hooks y caché
 
@@ -217,11 +220,13 @@ Reglas de interfaz:
 | `useEnvironmentOverview` | `/environment/overview` | 60 s |
 | `useEnvironmentRoom` | `/environment/rooms/{room_id}` | 60 s |
 | `useEnvironmentPeriod` | Estado local de fechas en la URL | — |
+| `useBatteryGroup` | `/maintenance/batteries/{group_id}` | 60 s |
+| `useBatteryHistory` | `/maintenance/batteries/{group_id}/{sensor_id}/history` | 60 s |
 | `useMaintenanceOverview` | `/maintenance/overview` | 60 s |
 | `useMaintenanceDevice` | `/maintenance/devices/{device_id}` | 60 s |
 | `useMaintenanceDays` | Estado de `?days=` en la URL | — |
 | `useWeatherOverview` | `/weather/overview` | 60 s |
-| `useWeatherDays` | Estado de `?days=` en la URL | — |
+| `useDatePeriod` | Estado de `?start=&end=` en la URL | — |
 | `useBuildings` | `/meta/buildings` | 30 min |
 
 ## Estilos
@@ -245,7 +250,7 @@ Cubren:
 - Clientes API de Electricidad, Infraestructura, Mantenimiento y Medio Ambiente.
 - Helpers de Infraestructura (periodo, formato, mapa horario y datos obsoletos).
 - Helpers de Mantenimiento (periodo, batería, filtros, matriz y mapa de transmisión).
-- Helpers de Medio Ambiente (periodo, formato, estados y aviso de exposición solar).
+- Helpers de Medio Ambiente (periodo, formato, avisos de cobertura de AEMET y de exposición solar).
 - Componentes `ChartCard` y utilidades de UI.
 
 `npm run typecheck` y `npm run build` deben pasar antes de entregar.

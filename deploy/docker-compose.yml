@@ -10,9 +10,12 @@ services:
       # Public origin allowed by CORS; the browser talks to nginx, not to this
       # container directly.
       CORS_ALLOW_ORIGINS: ${CORS_ALLOW_ORIGINS:-http://localhost:8080}
+      APP_ENV: ${APP_ENV:-production}
       APP_VERSION: ${APP_VERSION:-dev}
     ports:
-      - "${BACKEND_PORT:-8010}:8010"
+      # The web goes through nginx: the direct port is only for debugging, so it
+      # is not reachable from other machines unless BACKEND_BIND says otherwise.
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-8010}:8010"
     restart: unless-stopped
     healthcheck:
       test:

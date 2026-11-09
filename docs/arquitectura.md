@@ -12,8 +12,8 @@ navegador
          ├── Electricidad ── SELECT ──► MariaDB del recorder de Home Assistant
          ├── Iluminación ─── modelo sintético + ocupación real si existe
          ├── Infraestructura ─ SELECT ─► temperatura, humedad, CO₂ y presencia
-         ├── Medio Ambiente ── SELECT ─► estación meteorológica, interior, AEMET y energía
-         ├── Mantenimiento ── SELECT ─► latidos, batería y cortes de dispositivos
+         ├── Medio Ambiente ── SELECT ─► estación meteorológica y AEMET
+         ├── Mantenimiento ── SELECT ─► batería de Shellys, válvulas y aulas
          └── Metadatos de edificios
 ```
 
@@ -28,10 +28,10 @@ navegador
 | **Electricidad** | Consumo/coste por edificio y sector, base de centro cerrado y comparativa de periodos. | Reales si `DATA_SOURCE=database`; sintéticos en `mock`. |
 | **Iluminación** | Reparto luminarias/otras cargas, ranking por espacio y luz encendida sin ocupación. | Consumo sintético; ocupación real si hay contadores. |
 | **Infraestructura** | Índice de estancias y página por estancia con confort, ocupación, CO₂, recuperación térmica y comparación con la media del resto. | Reales si `DATA_SOURCE=database`; sintéticos en `mock`. |
-| **Medio Ambiente** | Estación meteorológica, cobertura, derivados, partículas y cruces con el interior, AEMET y la energía. | Reales si `DATA_SOURCE=database`; sintéticos en `mock`. |
-| **Mantenimiento** | Batería, transmisión y cortes por dispositivo, con matriz de decisión y previsión de sustitución. | Reales si `DATA_SOURCE=database`; sintéticos en `mock`. |
+| **Medio Ambiente** | Estación meteorológica frente a AEMET en Ciudad Real: temperatura, humedad y presión, con lluvia, partículas y batería. | Reales si `DATA_SOURCE=database`; sintéticos en `mock`. |
+| **Mantenimiento** | Nivel de batería de Shellys, válvulas y aulas, cada grupo en su página, con el histórico de cada sensor. | Reales si `DATA_SOURCE=database`; simulados en mock. |
 
-La cabecera mantiene el selector global de periodo solo en **Iluminación**. Electricidad e Infraestructura usan fechas propias: Electricidad porque compara varios periodos y Infraestructura porque necesita un rango personalizado por estancia (7 días por defecto y máximo un año). Medio Ambiente y Mantenimiento usan `?days=7|30|90`.
+La cabecera mantiene el selector global de periodo solo en **Iluminación**. Electricidad e Infraestructura usan fechas propias: Electricidad porque compara varios periodos e Infraestructura porque ofrece Día / Semana / Mes (día actual por defecto, máximo un año). Medio Ambiente también usa fechas propias (últimos 30 días por defecto, máximo un año). Mantenimiento usa `?days=7|30|90`.
 
 ## Capas del backend
 
@@ -54,14 +54,17 @@ app/
 - `services/lighting_service.py` calcula luminarias, ranking y despilfarro.
 - `services/environment_service.py` agrega estancias, construye el índice y el detalle, calcula cruces y cachea el conjunto de datos por periodo.
 - `services/maintenance_service.py` evalúa batería, transmisión, cortes y prioridad, y construye el índice y el detalle.
+- `services/battery_service.py` calcula el nivel actual y el histórico de las páginas de batería.
 - `core/electricity_map.py` declara los contadores eléctricos reales.
 - `core/environment_map.py` declara las estancias, sensores ambientales confirmados y referencias de ambiente/gas.
 - `core/maintenance_map.py` declara los dispositivos vigilados, umbrales y curva de batería.
+- `core/battery_map.py` declara los sensores de batería por grupo, su unidad y sus rangos válidos.
 - `core/buildings.py` es el catálogo compartido por el modelo sintético y las gráficas.
 - `db/repository.py` contiene las únicas consultas SQL.
 - `db/database_data.py` convierte filas acumuladas en series horarias.
 - `db/environment_data.py` convierte estadísticas, estados crudos y acumulados de gas en series ambientales.
 - `db/maintenance_data.py` carga latidos, batería y estados previos a la ventana para Mantenimiento.
+- `db/battery_data.py` carga la última fila, la última lectura válida y las medias por hora de cada sensor de batería.
 
 ## Endpoints
 
@@ -78,6 +81,8 @@ app/
 | GET | `/api/v1/environment/rooms/{room_id}` | Detalle de una estancia con series, mapa horario y cruces. |
 | GET | `/api/v1/maintenance/overview` | Estado de los dispositivos: batería, transmisión, cortes, matriz y mapa diario. |
 | GET | `/api/v1/maintenance/devices/{device_id}` | Detalle de un dispositivo con historial de batería y cortes. |
+| GET | `/api/v1/maintenance/batteries/{group_id}` | Nivel actual de los sensores de un grupo (`shellys`, `valvulas` o `aulas`). |
+| GET | `/api/v1/maintenance/batteries/{group_id}/{sensor_id}/history` | Histórico de batería de un sensor, con `start` y `end` opcionales. |
 | GET | `/api/v1/meta/buildings` | Lista de edificios para los selectores. |
 | GET | `/health/live` | Estado y origen de datos. |
 | GET | `/health/ready` | Comprueba la conexión a la base de datos en modo `database`. |
